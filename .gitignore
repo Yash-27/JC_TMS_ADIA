@@ -1,0 +1,12 @@
+# Julia
+Manifest.toml
+*.jli
+*.ji
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+*.swp
