@@ -37,7 +37,7 @@ const PARAMS = (
 # Currently available: :concurrence, :purity, :tracedist
 const ACTIVE_OBSERVABLES = [
     :concurrence,
-    :purity,
+    # :purity,
     :tracedist,
 ]
 

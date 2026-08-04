@@ -1,32 +1,29 @@
 using NLsolve
 
-const N_FLOOR = 5
+const N_FLOOR = 7
 
 # Calibrated once via the k-sweep diagnostic — replace with your actual printed values.
-const K_FLOOR_REGIME   = 5    # worst-case k_needed among floor-dominated (η,g) pairs
-const K_PHYSICS_REGIME = 15   # worst-case k_needed among physics-dominated (η,g) pairs
+const K_FLOOR_REGIME   = 7    # worst-case k_needed among floor-dominated (η,g) pairs
+const K_PHYSICS_REGIME = 17   # worst-case k_needed among physics-dominated (η,g) pairs
 
-const K_CLASSIFY_REF = 20.0   # reference k used only to decide which branch wins
+const K_CLASSIFY_REF = 22.0   # reference k used only to decide which branch wins
 
 # ==============================================================================
 # truncation.jl
 #
-# Two ways to estimate the Fock-space cutoff N for a cavity:
+# estimate_truncation(κ_1, κ_2, η, g_1, g_2) -> (N_1, N_2)
 #
-#   1. estimate_truncation(κ_1, κ_2, η, g_1, g_2) -> (N_1, N_2)
-#      Exact (to 2nd-order cumulant closure): solves the full nonlinear
-#      steady-state equations via NLsolve, including qubit backaction.
-#      Expensive -- one nonlinear solve per call.
+# Solves the full nonlinear steady-state equations via NLsolve (including
+# qubit backaction), computes mean photon number and variance for each
+# cavity, then classifies each as "floor-dominated" (small n_mean, cutoff
+# set by N_FLOOR) or "physics-dominated" (n_mean large enough to set the
+# cutoff itself) via k_logic, and returns the resulting integer Fock
+# cutoffs.
 #
-#   2. choose_k_and_N(η, g, κ) -> (regime, k, N)
-#      Fast closed-form approximation (assumes κ_1 = κ_2 = κ, g_1 = g_2 = g,
-#      i.e. the symmetric case) using a pre-calibrated safety margin k,
-#      chosen by classifying whether the point is "floor-dominated" (small
-#      n_mean, cutoff set by N_FLOOR) or "physics-dominated" (n_mean large
-#      enough to set the cutoff itself). Intended for sweeps where solving
-#      the full nonlinear system at every grid point would be too slow --
-#      use estimate_truncation to spot-check/calibrate K_FLOOR_REGIME and
-#      K_PHYSICS_REGIME, then use choose_k_and_N for the bulk of the sweep.
+# NOTE: a fast closed-form approximation (skipping the nonlinear solve,
+# valid only for the symmetric case κ_1=κ_2, g_1=g_2) was sketched out as
+# choose_k_and_N but isn't needed yet -- add it back in only once the
+# nonlinear solve actually becomes a bottleneck in a sweep.
 # ==============================================================================
 
 # ---- pack / unpack helpers ---------------------------------------------
@@ -142,6 +139,33 @@ function photon_number_moments(v)
 end
 
 # ------------------------------------------------------------------------
+# solve_moments: solves the steady state and returns just the mean photon
+# number and variance for each cavity -- (mu_1, var_1, mu_2, var_2).
+# Nothing about margin/k/classification here; that's layered on top by
+# N_from_k / k_logic / estimate_truncation, or swept independently by a
+# diagnostic script.
+# ------------------------------------------------------------------------
+function solve_moments(κ_1::Float64, κ_2::Float64, η::Float64,
+                        g_1::Float64, g_2::Float64)
+    x, sol = solve_steady_state(η, g_1, g_2, κ_1, κ_2)
+    if !converged(sol)
+        @warn "solve_moments: steady-state solve did not converge"
+    end
+
+    v = unpack(x)
+    pm = photon_number_moments(v)
+
+    return (mu_1=v.n1, var_1=pm.var1, mu_2=v.n2, var_2=pm.var2)
+end
+
+# ------------------------------------------------------------------------
+# N_from_k: turns a (mean, variance) pair plus a chosen margin multiplier
+# k into an integer Fock-space cutoff, with a floor of N_FLOOR so the
+# basis is never degenerate for tiny mean photon number.
+# ------------------------------------------------------------------------
+N_from_k(mu, var, k) = ceil(Int, max(mu + k * sqrt(var), N_FLOOR + k))
+
+# ------------------------------------------------------------------------
 # k_logic: classify a (mean, variance) pair as floor-dominated or
 # physics-dominated at the fixed reference margin K_CLASSIFY_REF, and
 # return the calibrated k for whichever regime wins.
@@ -167,27 +191,18 @@ end
 # ------------------------------------------------------------------------
 function estimate_truncation(κ_1::Float64, κ_2::Float64, η::Float64,
                               g_1::Float64, g_2::Float64)
-    x, sol = solve_steady_state(η, g_1, g_2, κ_1, κ_2)
-    if !converged(sol)
-        @warn "estimate_truncation: steady-state solve did not converge"
-    end
-
-    v = unpack(x)
-    pm = photon_number_moments(v)
-
-    mu_1, mu_2 = v.n1, v.n2
-    var_1, var_2 = pm.var1, pm.var2
+    mts = solve_moments(κ_1, κ_2, η, g_1, g_2)
 
     floor_term = N_FLOOR + K_CLASSIFY_REF
 
-    physics_term_1 = mu_1 + K_CLASSIFY_REF * sqrt(var_1)
-    physics_term_2 = mu_2 + K_CLASSIFY_REF * sqrt(var_2)
+    physics_term_1 = mts.mu_1 + K_CLASSIFY_REF * sqrt(mts.var_1)
+    physics_term_2 = mts.mu_2 + K_CLASSIFY_REF * sqrt(mts.var_2)
 
     k_1 = k_logic(physics_term_1, floor_term)
     k_2 = k_logic(physics_term_2, floor_term)
 
-    N_1 = ceil(Int, max(mu_1 + k_1 * sqrt(var_1), N_FLOOR + k_1))
-    N_2 = ceil(Int, max(mu_2 + k_2 * sqrt(var_2), N_FLOOR + k_2))
+    N_1 = N_from_k(mts.mu_1, mts.var_1, k_1)
+    N_2 = N_from_k(mts.mu_2, mts.var_2, k_2)
 
     return N_1, N_2
 end

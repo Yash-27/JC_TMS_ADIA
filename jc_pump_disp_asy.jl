@@ -1,21 +1,24 @@
-## Packages
 using QuantumOptics
 
 # ==============================================================================
 # sim_core.jl
 #
-# Core physics engine: two qubits, each coupled to its own cavity, with the
-# cavities linked by a two-mode-squeezing drive (η). This is the "reservoir
-# engineering" setup where adiabatically eliminating the cavities gives an
-# effective dissipative interaction between the two qubits alone.
+# Core physics engine only. Two qubits, each coupled to its own cavity, with
+# the cavities linked by a two-mode-squeezing drive (η). This is the
+# "reservoir engineering" setup where adiabatically eliminating the cavities
+# gives an effective dissipative interaction between the two qubits alone.
 #
+# This file defines the physical system and solves it -- nothing else.
+# Truncation choices, diagnostics (concurrence, trace distance), sweeps, and
+# saving all belong in separate files that build on top of this.
+# ==============================================================================
+
 # ------------------------------------------------------------------------
 # run_sim: given physical parameters and a chosen Fock-space truncation
 # (N_1, N_2), solves both the full 4-body model and the adiabatically-
 # eliminated 2-qubit effective model, and returns their steady-state
 # density matrices.
 #
-
 # Arguments:
 #   g_1, g_2   : qubit-cavity coupling strengths
 #   κ_1, κ_2   : cavity decay rates
@@ -23,14 +26,18 @@ using QuantumOptics
 #   γ          : intrinsic qubit decay rate
 #   γ_phi      : intrinsic qubit dephasing rate
 #   N_1, N_2   : Fock-space truncation for cavity 1 and cavity 2
-#                (see estimate_truncation)
 #
 # Returns:
-#   (rho_ss_full_atoms, rho_ss_adia)
-#     rho_ss_full_atoms : full model's steady state, traced down to just
-#                         the two qubits
-#     rho_ss_adia       : adiabatic (cavity-eliminated) model's 2-qubit
-#                         steady state
+#   (rho_ss_full, rho_ss_adia)
+#     rho_ss_full : full model's steady state, untraced (cavity_1 ⊗
+#                   cavity_2 ⊗ qubit ⊗ qubit) -- kept untraced so
+#                   truncation-convergence checks can see artifacts in
+#                   the cavity part of the state, not just the reduced
+#                   qubit state. Its dimension depends on N_1, N_2, so
+#                   comparing two such states at different truncations
+#                   requires padding to a common Fock cutoff first.
+#     rho_ss_adia : adiabatic (cavity-eliminated) model's 2-qubit
+#                   steady state
 # ------------------------------------------------------------------------
 function run_sim(g_1::Float64, g_2::Float64, κ_1::Float64, κ_2::Float64,
                   η::Float64, γ::Float64, γ_phi::Float64,

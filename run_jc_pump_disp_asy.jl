@@ -341,8 +341,7 @@ end
 # ==============================================================================
 # MAIN
 # ==============================================================================
-if abspath(PROGRAM_FILE) == @__FILE__
-
+begin
     obs_list = select_observables(ACTIVE_OBSERVABLES)
     labels   = obs_labels(obs_list)
 
