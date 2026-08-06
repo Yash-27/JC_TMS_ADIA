@@ -42,4 +42,4 @@ const ACTIVE_OBSERVABLES = [
 ]
 
 # --- Output --------------------------------------------------------------
-const OUTFILE = "results.jld2"
+const OUTFILE = "results_k1_$(PARAMS.κ_1)_k2_$(PARAMS.κ_2)_g2_$(PARAMS.g_2).jld2"
