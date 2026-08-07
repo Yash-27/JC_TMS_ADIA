@@ -11,6 +11,12 @@ Thumbs.db
 .vscode/
 *.swp
 
+# Deny-by-default: ignore everything, then re-include by exception.
+# Results (.jld2), figures (.pdf) and notebooks (.nb) are deliberately out.
+# A new non-.jl file that SHOULD be tracked needs its own "!" line here --
+# without one it is invisible to git, with no warning that it is missing.
 *
 !.gitignore
 !*.jl
+!CLAUDE.md
+!Project.toml
