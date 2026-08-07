@@ -203,6 +203,7 @@ function run_sweep(; κ_1::Float64 = 2.0,
 
     next_big    = Atomic{Int}(0)
     next_small  = Atomic{Int}(0)
+    started     = Atomic{Int}(0)   # dispatch counter, for the start lines
     inflight    = Set{CartesianIndex{2}}()   # guarded by print_lock
     print_lock  = ReentrantLock()
     done_count  = 0            # guarded by print_lock
@@ -240,10 +241,11 @@ function run_sweep(; κ_1::Float64 = 2.0,
             # Announce on dispatch, not just on completion. The expensive
             # points run first and can take minutes, so without this the
             # display sits unchanged long enough to look hung.
+            n_started = atomic_add!(started, 1) + 1
             lock(print_lock) do
                 push!(inflight, idx)
-                @printf("  start  ..../%-2d  β=%8.3f  x=%.4f  N₁=%2d N₂=%2d  dim=%5d  (%d running)\n",
-                        length(order), β_vals[i], x_vals[j], N_1, N_2,
+                @printf("  start  %2d/%-2d  β=%8.3f  x=%.4f  N₁=%2d N₂=%2d  dim=%5d  (%d running)\n",
+                        n_started, length(order), β_vals[i], x_vals[j], N_1, N_2,
                         dim_grid[i, j], length(inflight))
             end
 
