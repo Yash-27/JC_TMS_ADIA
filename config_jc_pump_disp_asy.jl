@@ -19,8 +19,8 @@
 #
 # x_range is swept linearly, β_range logarithmically.
 const PARAMS = (
-    κ_1       = 2.0,
-    κ_2       = 2.0,
+    κ_1       = 2.5,
+    κ_2       = 1.5,
     g_2       = 1.0,
     γ_val     = 0.0,
     γ_phi_val = 0.0,
