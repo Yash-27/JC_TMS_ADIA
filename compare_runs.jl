@@ -395,6 +395,92 @@ conc_key(m) = Symbol(:concurrence_, m.key)
 
 
 # ==============================================================================
+# LINE CUTS
+# ==============================================================================
+#
+# A heatmap answers "where is it large"; a line cut answers "how does it grow".
+# Holding β fixed and reading D against x is the direction that matters here --
+# x is the drive relative to threshold, and the adiabatic model's denominators
+# all carry 4η² − κ_1κ_2, so the interesting behaviour is the approach to x = 1.
+#
+# CUT_β is a REQUESTED value, snapped to the nearest swept β. It is not asserted
+# to be on the grid: β_range or len can change, and a cut that silently moves to
+# the nearest available point is more useful than one that errors. The chosen
+# values are printed so the snap is never invisible.
+
+const CUT_β   = 1.0      # requested β for the first curve (10^0)
+const CUT_N   = 2        # that point plus the next (CUT_N - 1) in increasing β
+const CUT_KEY = :full    # which D grid to cut -- :full or :adia
+
+# ------------------------------------------------------------------------
+# nearest_β: index of the swept β closest to a requested value.
+#
+# Matched in LOG space, because β_range is swept logarithmically. The swept
+# values are 0.01, 0.0464, 0.215, 1.0, 4.64, 21.5, 100 -- on a linear metric
+# a request for β = 1 sits far closer to 0.215 and 4.64 than those points are
+# to each other in any meaningful sense, and requests anywhere below 1 would
+# all collapse toward the same few small values. Log distance is the metric
+# the grid was built with, so it is the one to search in.
+# ------------------------------------------------------------------------
+nearest_β(β_vals, β) = argmin(abs.(log10.(β_vals) .- log10(β)))
+
+# ------------------------------------------------------------------------
+# model_by_key: look up a MODELS row by its key rather than by position, so
+# reordering MODELS or dropping a row cannot silently cut the wrong grid.
+# ------------------------------------------------------------------------
+function model_by_key(k::Symbol)
+    i = findfirst(m -> m.key === k, MODELS)
+    if i === nothing
+        have = join(string.(getfield.(MODELS, :key)), ", ")
+        error("no MODELS row with key :$k -- have $have")
+    end
+    return MODELS[i]
+end
+
+# ------------------------------------------------------------------------
+# plot_linecut: D against x, one curve per β row.
+#
+# Not built on plot_map -- that draws a scatter over the (β, x) plane with a
+# colour axis and forces legend = false, none of which applies to a 1D cut.
+# The two share save_fig and apply_theme! and nothing else.
+#
+# NaN still means "no data": non-finite points are dropped per curve rather
+# than breaking the line, consistent with the heatmaps. A row that is
+# entirely NaN is skipped with a warning instead of contributing an empty
+# legend entry.
+#
+# Markers are on because the grid is coarse (len = 7). Without them the
+# reader cannot tell which points are data and which are interpolation --
+# and with a NaN dropped mid-curve, a bare line would hide the gap entirely.
+# ------------------------------------------------------------------------
+function plot_linecut(x_vals, D, rows, β_vals; kwargs...)
+    p     = plot()
+    drawn = 0
+    for i in rows
+        row  = D[i, :]
+        keep = isfinite.(row)
+        if !any(keep)
+            @warn "line cut at β = $(β_vals[i]) is entirely NaN -- skipped"
+            continue
+        end
+        plot!(p, x_vals[keep], row[keep];
+              label      = latexstring("\\beta = " * fmt_num(β_vals[i])),
+              marker     = :circle,
+              markersize = 4)
+        drawn += 1
+    end
+    drawn == 0 && error("nothing finite to plot in any requested row")
+
+    plot!(p;
+          xlabel = L"x",
+          legend = :topleft,
+          size   = (700, 480),
+          kwargs...)
+    return p
+end
+
+
+# ==============================================================================
 # RUN
 # ==============================================================================
 
@@ -472,6 +558,31 @@ for m in MODELS
                          right_margin   = 8mm,
                          (cl === nothing ? (;) : (; clims = cl))...)
     save_fig(figs[key], conc_fig_name(m); dir = FIG_DIR)
+end
+
+# --- Line cut: D vs x at two adjacent β -------------------------------------
+#
+# Reuses fig_title / fig_cbar so the cut carries the same A:(...) B:(...)
+# header as the heatmap it comes from, and fig_cbar doubles as the y label --
+# it already names exactly the plotted quantity.
+#
+# The row range is clamped rather than wrapped: asking for CUT_N points from
+# the last β should give the one that exists, not silently fold around to
+# β = 0.01 and draw two curves four decades apart under adjacent-looking
+# labels.
+let m = model_by_key(CUT_KEY)
+    D    = D_grids[m.key]
+    i0   = nearest_β(A.β_vals, CUT_β)
+    rows = i0:min(i0 + CUT_N - 1, length(A.β_vals))
+
+    @printf("\nline cut of :%s at β = %s (requested %g)\n",
+            m.key, join([fmt_num(A.β_vals[i]) for i in rows], ", "), CUT_β)
+
+    figs[:linecut] = plot_linecut(A.x_vals, D, rows, A.β_vals;
+                                  title  = fig_title(m, A, B),
+                                  ylabel = fig_cbar(m))
+    save_fig(figs[:linecut], "tracedist_linecut_" * m.tag * run_pair_tag();
+             dir = FIG_DIR)
 end
 
 # Same try/catch discipline as the report block in run_sweep: a bug in a
