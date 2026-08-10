@@ -97,15 +97,21 @@ title) comes out of the `.jld2`. Practical consequence: **editing the config to 
 parameters breaks plotting until you re-run the sweep**, because `run_plot.jl` will go
 looking for a results file that doesn't exist yet.
 
-Two results files are currently on disk, both `len = 7`, same `x_range` and `β_range`:
+Three results files are currently on disk, all `len = 7`, same `x_range` and `β_range`,
+all points `:ok`, all carrying the same four observables. The letters are the names used
+throughout this file and in `compare_runs.jl`:
 
-| file | κ_1 | κ_2 | g_2 |
-|---|---|---|---|
-| `results_k1_2.0_k2_2.0_g2_1.0.jld2` | 2.0 | 2.0 | 1.0 |
-| `results_k1_2.5_k2_1.5_g2_1.0.jld2` | 2.5 | 1.5 | 1.0 |
+| | file | κ_1 | κ_2 | g_2 |
+|---|---|---|---|---|
+| **A** | `results_k1_2.0_k2_2.0_g2_1.0.jld2` | 2.0 | 2.0 | 1.0 |
+| **B** | `results_k1_2.5_k2_1.5_g2_1.0.jld2` | 2.5 | 1.5 | 1.0 |
+| **C** | `results_k1_2.5_k2_1.5_g2_0.75.jld2` | 2.5 | 1.5 | 0.75 |
 
-The config sits at `κ_1 = 2.5, κ_2 = 1.5`, so `run_plot.jl` currently resolves to the
-second. `compare_runs.jl` uses both.
+B and C differ **only in `g_2`**; A differs from both in κ. That is what makes the three
+useful together — see the finding below, which needs a g_2-only pair to state.
+
+The config sits at C's parameters, so `run_plot.jl` currently resolves to C.
+`compare_runs.jl` uses all three.
 
 Hardcoded on purpose in `plot_map`, because there is only one right answer:
 
@@ -136,13 +142,21 @@ Figures go to `Full_vs_Adia/` (what `run_plot.jl` passes) and `Full_vs_Full/` (w
 `figures/`, `figures2/` also exist from earlier runs — five destinations, none tracked by
 git.
 
-## Comparing two runs — `compare_runs.jl`
+## Comparing runs — `compare_runs.jl`
 
-The second entry point. It loads **two** `.jld2` files and compares each model against
-*itself* across parameter sets, which the single-run figures structurally cannot do.
+The second entry point. It compares each model against *itself* across parameter sets,
+which the single-run figures structurally cannot do.
 
-Set `RUN_A` and `RUN_B` at the top to the `(κ_1, κ_2, g_2)` triples that name the files.
-Four figures, all on the same (β, x) mesh:
+`PAIRS` at the top lists the comparisons, each a `(label, a, b)` row naming two of the
+`RUN_A` / `RUN_B` / `RUN_C` triples. All three unordered pairs are currently listed, so
+one invocation emits a complete set: any two of A, B, C can be read against each other.
+
+**A and B are the two SLOTS of a pair, not two fixed runs.** C sits in the `a` slot of
+both its pairs, and `RUN_A` sits in the `b` slot of `:C_vs_A`. The slots are not
+interchangeable — every difference is `a − b` and every title reads `A:(…) B:(…)`, so
+swapping a row flips the sign of both its ΔC panels.
+
+**Five figures per pair, 15 in total.** Four heatmaps on the (β, x) mesh:
 
 | grid key | quantity | signed? |
 |---|---|---|
@@ -151,20 +165,68 @@ Four figures, all on the same (β, x) mesh:
 | `:concurrence_full` | `C(ρ_full^A) − C(ρ_full^B)` | **yes** |
 | `:concurrence_adia` | `C(ρ_adia^A) − C(ρ_adia^B)` | **yes** |
 
+plus one **line cut** of `D` against x at fixed β, which answers "how does it grow"
+where a heatmap answers "where is it large". x is the direction that matters, since the
+adiabatic denominators all carry `4η² − κ_1κ_2` and the interesting behaviour is the
+approach to `x = 1`. Controlled by four constants, none of them per-pair on purpose —
+the cut is a way of reading one `D` grid, not a property of the comparison, and two pairs
+cut at different β could not be read against each other:
+
+- `CUT_KEY` — which `D` grid to cut (`:full`)
+- `CUT_β` — a *requested* β, snapped to the nearest swept value in **log** space (the
+  grid is log-spaced, so a linear metric would collapse every request below 1 onto the
+  same few points). The snapped values are printed, so the snap is never invisible.
+- `CUT_N` / `CUT_N_LOW` — how many grid points to take above and below the snapped β.
+  Clamped at both ends rather than wrapped, so asking past either end gives the points
+  that exist instead of folding four decades around.
+
 This is **not** the in-file `:tracedist` / `:concurrence_diff`, which are full-vs-adia
 *within* one run. These never cross the two models; they cross the two *parameter sets*.
+The distinction is load-bearing enough that the figure titles say `full models`, plural —
+singular "trace distance, full" reads as the in-file observable, which is a different
+quantity.
 
 `MODELS` declares `:full` and `:adia` once and drives both figure families. The
 trace-distance loop uses the whole row; the concurrence loop takes only `key` and `word`
 (`conc_key(m) = Symbol(:concurrence_, m.key)` — which works because the sweep's `:single`
-expansion builds those names the same way). Drop a row to skip both its panels.
+expansion builds those names the same way). Drop a row to skip both its panels, in every
+pair.
+
+`run_pair(pr, D_grids, figs, pair_axes)` does one pair and **mutates** the three
+containers it is handed, which is what keeps them live at top level after the script
+finishes. `D_grids` and `figs` are both keyed `(pair_label, grid_key)`, where `grid_key`
+is `:full` / `:adia` for the trace-distance grids and `:concurrence_full` /
+`:concurrence_adia` for the signed ones; `figs` additionally holds `(label, :linecut)`,
+which cannot clash because no `MODELS` key is `:linecut`.
+
+```julia
+figs[(:C_vs_A, :adia)]
+figs[(:C_vs_A, :linecut)]
+plot_map(pair_axes[:C_vs_A], D_grids[(:C_vs_A, :adia)])
+```
+
+`pair_axes` is keyed by label alone and holds the `d` each pair was drawn on — needed
+because `assert_same_grid` only promises the two runs *of one pair* share a mesh. Do not
+rename it `axes`: `Base.axes` is called inside `cross_tracedist` and `cross_concurrence`,
+and a top-level `axes = Dict(…)` in `Main` makes those a name-resolution error.
 
 Things that are load-bearing:
 
 - **The two axes hold (β, x) fixed, not the raw parameters.** At matched (β, x) the two
-  runs sit at different η and different `g_1`. The figures answer "how much does the
-  state depend on the κ asymmetry at fixed dimensionless coordinates", not "at fixed
-  drive".
+  runs sit at different η whenever they differ in κ, and at a different `g_1` whenever
+  they differ in **either** κ or `g_2`. So the figures never answer "at fixed drive".
+  *Which* parameter a figure is about is per pair, and it is not always κ:
+  - `:A_vs_B` is κ-only — it moves η and `g_1` together, and is about the κ asymmetry
+  - `:C_vs_B` is `g_2`-only — η is untouched and only `g_1` moves, so it is about the
+    coupling scale at fixed drive *and* fixed asymmetry
+  - `:C_vs_A` differs in both and cannot separate the two causes; read it as one
+    combined displacement, not as evidence about either parameter
+- **`pair_tag` must stay unique per pair.** It builds the filename suffix, and `g_2` moves
+  inside the per-run block only when the two runs disagree about it. An earlier version
+  took `g_2` from the `a` run alone and appended it once — correct only while every pair
+  shared it, and it gave `:C_vs_A` and `:C_vs_B` *the same tag*, silently overwriting five
+  PDFs. The shared-`g_2` form is unchanged, so `:A_vs_B` still regenerates the files it
+  first wrote rather than landing beside them.
 - **Signed differences get `sym_clims` + `:balance`**, not viridis on a data range. This
   is issue 2's prescription, applied here rather than inherited — on an asymmetric range
   a diverging colormap's neutral midpoint lands on some arbitrary nonzero value and the
@@ -172,9 +234,16 @@ Things that are load-bearing:
 - **`clims` is computed from the `si_scale`d grid, not the raw one.** `plot_map` applies
   `clims` to what it is handed; limits taken before scaling are off by that power of ten
   and clamp everything to one end colour.
-- **Every panel takes its own colour range.** Deliberate — see the finding below for why
-  a shared range would hide the main result. Compare magnitudes via the printed summary,
-  never by eye across panels.
+- **Every panel takes its own colour range**, across models *and* across pairs.
+  Deliberate — see the finding below for why a shared range would hide the main result.
+  No panel's colours are comparable to any other's; compare magnitudes via the printed
+  summary, never by eye across panels.
+- **Titles name the differing parameters once, with values per slot** — `(κ₁,κ₂): A (2,2)
+  B (2.5,1.5)  both: g₂ = 1`, not the names repeated under each slot. Shared parameters
+  are labelled `both:`; without that label they sit one `\quad` past the B values, the
+  same gap that separates A from B, and read as belonging to B. Brackets go on
+  unconditionally, including a pair differing in one parameter — a lone unbracketed title
+  doesn't look tidier, just unlike its neighbours.
 - **`si_scale` exists to fix a collision, not for looks.** GR pins `colorbar_title` at a
   fixed offset from the bar and the tick labels grow rightward into it, so `1.25E-14`
   overprints the title. `right_margin` cannot fix this — it translates bar, ticks and
@@ -187,34 +256,67 @@ Things that are load-bearing:
   second check is not redundant: `analyze` does not consult `status_grid` (issue 7), so
   an observable can be NaN at a point whose solve was `:ok`.
 - All four maps are **immune to issue 1**. The full panels never touch `J_adia`. For
-  `D_adia` the correction would be the same fixed local σ_z on qubit 1 in both runs, and
-  trace distance is invariant under a unitary applied to both arguments. `ΔC_adia` is
-  safer still — concurrence is a local-unitary invariant, so each operand is individually
+  `D_adia` the correction would be the same fixed local σ_z on qubit 1 in both runs —
+  fixed because it is a convention of how `J_adia` is written, not a function of the
+  parameters, so it is shared whichever parameter the pair disagrees about — and trace
+  distance is invariant under a unitary applied to both arguments. `ΔC_adia` is safer
+  still — concurrence is a local-unitary invariant, so each operand is individually
   unchanged and the argument doesn't need the two runs to share the rotation.
 
 ### Finding: the adiabatic steady state is a function of (β, x) alone
 
-For the pair currently configured, `ΔC_adia` is **identically zero to machine precision**
-— max |ΔC_adia| ≈ 1.8e-14 against concurrence values of order 0.24, structureless, signs
-scattered. The stored maxima agree to 14 digits:
+Measured across all three pairs, so it now covers **every** way these runs differ — κ
+alone, `g_2` alone, and both together:
+
+| pair | differs in | `D_full` max | `D_adia` max | `ΔC_full` extremum |
+|---|---|---|---|---|
+| `:A_vs_B` | κ | 0.1608 | 2.0e-14 | −0.0601 @ β=0.215 |
+| `:C_vs_A` | κ and g_2 | 0.0624 | 2.1e-14 | −0.0567 @ β=1 |
+| `:C_vs_B` | g_2 | 0.1017 | 2.0e-14 | −0.0542 @ β=1 |
+
+Every adiabatic column is at machine precision — structureless, signs scattered — and the
+three stored maxima agree to 14 digits:
 
 ```
-concurrence_adia   run A 0.2360436749507588   run B 0.23604367495075904
-concurrence_full   run A 0.2866               run B 0.2598
+concurrence_adia   A 0.2360436749507588   B 0.2360436749507590   C 0.2360436749507577
+concurrence_full   A 0.2866               B 0.2598               C 0.2614
 ```
 
-So changing κ_1, κ_2 at fixed (β, x) does not move the adiabatic state at all: the
-elimination has absorbed the raw rates completely into the two dimensionless coordinates.
-The full model has **not** — it shifts by up to 0.060 in concurrence, ~20% of peak.
+So at fixed (β, x) the adiabatic steady state does not move at all. The elimination has
+absorbed the raw parameters completely into the two dimensionless coordinates. The full
+model has **not** — it shifts by up to 0.060 in concurrence, ~20% of peak.
 
-That gap is the residual cavity dependence the elimination discards, and it is a
-statement about the approximation itself rather than about either run. `D_adia` (2e-14)
-was already saying this, but it reads as "barely responds"; the concurrence panel makes
-it exact.
+**The `g_2` half of this is provable, not just measured**, and worth knowing because it
+means no future run can disturb it. `H_adia ∝ g_1 g_2` and each `J_adia` entry is linear
+in g (`jc_pump_disp_asy.jl:95,105-106`), so the dissipator is also quadratic and the
+*entire* adiabatic Liouvillian is homogeneous of degree 2 in the couplings — given
+`γ = γ_φ = 0`, there is no other term. At fixed β, `g_1 = g_2 sqrt(β κ_1/κ_2)` scales with
+`g_2`, so both couplings scale together, `L → λ²L`, and the kernel — the steady state — is
+exactly unchanged. **This argument dies if `γ` or `γ_φ` is ever turned on**, since those
+rates do not scale with g; the κ half was only ever empirical.
+
+Two things to read off the table:
+
+- **`:A_vs_B` is the largest displacement**, so κ is the stronger lever on the full model,
+  not `g_2`. (An earlier version of this section cited 0.060 as A-vs-B's shift; that is
+  the *concurrence* figure, and comparing it against another pair's *trace distance* is
+  what made `g_2` look dominant. Compare like with like.)
+- **`ΔC_full` is a weak proxy for the displacement.** C and B have nearly equal peak
+  concurrence (0.2614 vs 0.2598) while `D_full` reaches 0.10 — the states diverge
+  substantially along directions concurrence cannot see. That is the `D`/`ΔC` disagreement
+  the file's header anticipates, actually occurring.
+
+All three `D_full` maxima sit at the same point, β = 4.64, x = 0.7225 — the top of the x
+range, just right of β = 1. That is the approach to threshold, where the elimination's
+`4η² − κ_1κ_2` denominators come closest to blowing up, so it is where the two models
+should disagree most, and they do.
 
 This is also why the panels are not on a shared colour scale — on a range set by
 `ΔC_full`, the entire adiabatic panel would be uniform white, and *identically zero*
 would be indistinguishable from *merely small*.
+
+**Practical consequence: one point settles anything about the adiabatic model.** There is
+no parameter regime to hunt for, which is what makes issue 1's check cheap.
 
 ## Conventions worth not breaking
 
@@ -284,12 +386,13 @@ should be deleted.
 
 The check is cheaper than it looks, and **one point settles it for the whole sweep** —
 see the (β, x)-only finding above. Since the adiabatic steady state does not depend on
-κ_1, κ_2 separately, there is no need to scan for a parameter regime where the
-discrepancy shows up; any single (β, x) is representative.
+κ_1, κ_2 or `g_2` separately, there is no need to scan for a parameter regime where the
+discrepancy shows up; any single (β, x) in any of the three runs is representative.
 
-Note also that none of the four `compare_runs.jl` panels can detect this, by construction
-— that is the point of the immunity argument in that section. It has to be tested against
-the in-file `:tracedist`.
+Note also that **no** `compare_runs.jl` figure can detect this, by construction — that is
+the point of the immunity argument in that section, and it covers the line cut too, which
+is just a cut through the immune `D_full` grid. It has to be tested against the in-file
+`:tracedist`.
 
 ### 2. `concurrence_diff` is drawn on a colour scale that cannot show it
 
