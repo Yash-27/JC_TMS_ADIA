@@ -14,6 +14,61 @@ using QuantumOptics
 # ==============================================================================
 
 # ------------------------------------------------------------------------
+# run_adia: build and solve the adiabatically-eliminated 2-qubit model
+# alone, with no cavities and no truncation.
+#
+# Extracted verbatim from run_sim, which now calls it. The point of the
+# extraction is that the adiabatic model is a 4x4 dense eigen-solve costing
+# microseconds, while the full model next to it is a Krylov solve on a
+# dim-900+ Liouvillian costing seconds to minutes. Anything that only wants
+# ρ_adia -- scanning it on a fine grid, optimizing over it -- should call
+# this and not pay for the full solve. Callers that want BOTH states still
+# call run_sim and are unaffected.
+#
+# Returns the 2-qubit steady state as a QuantumOptics Operator; use `.data`
+# for the raw 4x4 matrix that observables.jl consumes.
+# ------------------------------------------------------------------------
+function run_adia(g_1::Float64, g_2::Float64, κ_1::Float64, κ_2::Float64,
+                  η::Float64, γ::Float64, γ_phi::Float64)
+
+    qubit = SpinBasis(1 // 2)
+    σ_plus  = sigmap(qubit)
+    σ_minus = sigmam(qubit)
+    σ_z = sigmaz(qubit)
+
+    basis_adia = tensor(qubit, qubit)
+
+    σ_p_1_eff = embed(basis_adia, 1, σ_plus)
+    σ_m_1_eff = embed(basis_adia, 1, σ_minus)
+    σ_z_1_eff = embed(basis_adia, 1, σ_z)
+
+    σ_p_2_eff = embed(basis_adia, 2, σ_plus)
+    σ_m_2_eff = embed(basis_adia, 2, σ_minus)
+    σ_z_2_eff = embed(basis_adia, 2, σ_z)
+
+    H_adia = 1im * ( ( η * g_1 * g_2 ) / ( η^2 - ( ( κ_1 * κ_2 ) / 4 ) ) ) *
+             ( σ_p_1_eff * σ_p_2_eff - σ_m_1_eff * σ_m_2_eff )
+
+    Γ_sqrt_1 = 2im * ( (κ_1 * sqrt(κ_2 ) ) / ( 4η^2 - ( κ_1 * κ_2 ) ) )
+    Γ_sqrt_2 = 2im * ( (κ_2 * sqrt(κ_1 ) ) / ( 4η^2 - ( κ_1 * κ_2 ) ) )
+
+    ϵ_1 = ( 2η ) / κ_1
+    ϵ_2 = ( 2η ) / κ_2
+
+    J_adia = Operator[
+        ( Γ_sqrt_1 ) * ( g_1 * ϵ_1 * σ_p_1_eff - g_2 * σ_m_2_eff ),
+        ( Γ_sqrt_2 ) * ( g_2 * ϵ_2 * σ_p_2_eff - g_1 * σ_m_1_eff ),
+        sqrt(γ) * σ_m_1_eff,
+        sqrt(γ) * σ_m_2_eff,
+        sqrt(γ_phi/2) * σ_z_1_eff,
+        sqrt(γ_phi/2) * σ_z_2_eff
+    ]
+
+    # Adiabatic space: tiny (4x4) -> exact dense eigenvector solver.
+    return steadystate.eigenvector(dense(H_adia), dense.(J_adia))
+end
+
+# ------------------------------------------------------------------------
 # run_sim: given physical parameters and a chosen Fock-space truncation
 # (N_1, N_2), solves both the full 4-body model and the adiabatically-
 # eliminated 2-qubit effective model, and returns their steady-state
@@ -49,7 +104,6 @@ function run_sim(g_1::Float64, g_2::Float64, κ_1::Float64, κ_2::Float64,
     qubit = SpinBasis(1 // 2)
 
     basis_full = tensor(cavity_1, cavity_2, qubit, qubit)
-    basis_adia = tensor(qubit, qubit)
 
     # --- Operators (Full Space) ---
     σ_plus  = sigmap(qubit)
@@ -83,41 +137,15 @@ function run_sim(g_1::Float64, g_2::Float64, κ_1::Float64, κ_2::Float64,
         sqrt(γ_phi/2) * σ_z_2
     ]
 
-    # --- Operators (Adiabatic Space) ---
-    σ_p_1_eff = embed(basis_adia, 1, σ_plus)
-    σ_m_1_eff = embed(basis_adia, 1, σ_minus)
-    σ_z_1_eff = embed(basis_adia, 1, σ_z)
-
-    σ_p_2_eff = embed(basis_adia, 2, σ_plus)
-    σ_m_2_eff = embed(basis_adia, 2, σ_minus)
-    σ_z_2_eff = embed(basis_adia, 2, σ_z)
-
-    H_adia = 1im * ( ( η * g_1 * g_2 ) / ( η^2 - ( ( κ_1 * κ_2 ) / 4 ) ) ) *
-             ( σ_p_1_eff * σ_p_2_eff - σ_m_1_eff * σ_m_2_eff )
-
-    Γ_sqrt_1 = 2im * ( (κ_1 * sqrt(κ_2 ) ) / ( 4η^2 - ( κ_1 * κ_2 ) ) )
-    Γ_sqrt_2 = 2im * ( (κ_2 * sqrt(κ_1 ) ) / ( 4η^2 - ( κ_1 * κ_2 ) ) )
-
-    ϵ_1 = ( 2η ) / κ_1
-    ϵ_2 = ( 2η ) / κ_2
-
-    J_adia = Operator[
-        ( Γ_sqrt_1 ) * ( g_1 * ϵ_1 * σ_p_1_eff - g_2 * σ_m_2_eff ),
-        ( Γ_sqrt_2 ) * ( g_2 * ϵ_2 * σ_p_2_eff - g_1 * σ_m_1_eff ),
-        sqrt(γ) * σ_m_1_eff,
-        sqrt(γ) * σ_m_2_eff,
-        sqrt(γ_phi/2) * σ_z_1_eff,
-        sqrt(γ_phi/2) * σ_z_2_eff
-    ]
-
     # --- Solve for steady states ---
     # Full space: large/sparse -> iterative solver.
     rho_ss_full = steadystate.iterative(H_full, J_full)
 
-    # Adiabatic space: tiny (4x4) -> exact dense eigenvector solver.
-    H_adia_dense = dense(H_adia)
-    J_adia_dense = dense.(J_adia)
-    rho_ss_adia = steadystate.eigenvector(H_adia_dense, J_adia_dense)
+    # Adiabatic space: built and solved by run_adia above. Same operators,
+    # same solver as before the extraction -- this is the only definition of
+    # the adiabatic model in the repo, so a scan that calls run_adia directly
+    # is testing exactly the model the sweeps use.
+    rho_ss_adia = run_adia(g_1, g_2, κ_1, κ_2, η, γ, γ_phi)
 
     rho_ss_full_atoms = ptrace(rho_ss_full, (1, 2))
 
