@@ -20,3 +20,11 @@ Thumbs.db
 !*.jl
 !CLAUDE.md
 !Project.toml
+
+# file_concurrence/ -- the closed-form adiabatic-concurrence note. The directory
+# must be re-included FIRST: git does not descend into an ignored directory, so a
+# bare "!file_concurrence/concurrence_adia.md" on its own is inert. This is the one
+# exception that reaches into a subdirectory; !*.jl above still does not.
+# files_online/ is deliberately NOT given this treatment -- it stays local-only.
+!file_concurrence/
+!file_concurrence/*.md

@@ -70,6 +70,10 @@ run_jc_pump_disp_asy.jl     run_r_xi.jl             run_x_xi.jl
     STANDALONE -- no sweep, no .jld2
         compare_param_sets.jl   pairwise D between named parameter sets
         adia_concurrence_max.jl   argmax of C_adia over (x, β), via run_adia
+
+    PROSE -- no code, own sections below
+        files_online/           closed-form parallel project; INVERTS ξ
+        file_concurrence/       closed-form C_adia: x_c, u_c(x), C(2,x); ξ-free
 ```
 
 **`run_adia` is the only definition of the adiabatic model.** It was extracted out of
@@ -192,9 +196,11 @@ adiabatic model predicts no entanglement anywhere on this plane.
 
 That is not a bug, it is the analytic entanglement boundary. The adiabatic concurrence
 depends on β only through `b = β + 1/β ≥ 2`, and is nonzero only for `b < b_max(x)`; the
-`b = 2` (β = 1) threshold is `x* = 0.48388826`, the root of `x³ − 2x² + 9x − 4`. At
-β = 0.5 (`b = 2.5`) the boundary has already been crossed by `x = 0.3663`. Measured on
-run A's grid at `x = 0.3663`:
+`b = 2` (β = 1) threshold is `x_c = 0.48388826`, the root of `x³ − 2x² + 9x − 4`. At
+β = 0.5 (`b = 2.5`) the boundary has already been crossed by `x = 0.3663`. **Both halves
+are proven** in `file_concurrence/concurrence_adia.md` §3.3–3.5 — `b` is that file's `u`,
+and its `u_c(x)` is `b_max(x)` in closed form, so the boundary can be drawn rather than
+scanned for. Measured on run A's grid at `x = 0.3663`:
 
 | β | 0.215 | 0.4 | **0.5** | 0.6 | 0.8 | **1.0** | 1.5 | 2.0 |
 |---|---|---|---|---|---|---|---|---|
@@ -251,7 +257,7 @@ symmetric arms — which is where the elimination's validity actually lives, sin
 its own small parameter and `x` is what its `4η² − κ_1κ_2` denominators blow up on. Two
 independently known landmarks sit inside this box and on no existing grid: the **full
 model's optimum** (`C = 0.29676` at `x = 0.291, ξ ≈ 2.79, β = r = 1`) and the **adiabatic
-entanglement threshold** `x* = 0.48389`.
+entanglement threshold** `x_c = 0.48389` (proven in `file_concurrence` §3.5).
 
 **Grid layout: ROW = ξ (horizontal, log10), COLUMN = x (vertical, linear)** — grids are
 `[N_ξ, N_x]`. This keeps the repo-wide "row coordinate is the horizontal/log axis"
@@ -653,7 +659,18 @@ C_adia is maximal at  x = 0.148550,  β = 1,  where  C = 0.2376153969
 
 Measured with this repo's own `run_adia` + `calc_concurrence`, no closed form in the loop.
 `η/η_th = sqrt(x) = 0.3854`, so the optimum sits at 38.5% of threshold — far below it, and
-far below the `x* = 0.4839` point where adiabatic entanglement dies entirely.
+far below the `x_c = 0.4839` point where adiabatic entanglement dies entirely.
+
+**Both numbers now have exact closed forms**, from `file_concurrence/concurrence_adia.md`
+§10.7, and the script's measured values match them to the last printed digit:
+
+- `x* = (t*)²  = 0.1485501998979953`, where `t*` is the root of
+  `R(t) = t⁶ + t⁵ − 3t⁴ − 2t³ − 3t² − t + 1` on (0,1)
+- `C* = C(2,x*) = 0.23761539689930783`, from
+  `C_adia(β=1,x) = [2√x(1−x) − x(1+x)] / [2(x²+1)]`
+
+So the scan is now a *check* on the algebra rather than the only source of the number.
+Keep running it: it is seconds, and it exercises `run_adia` end to end.
 
 The script is a coarse (β, x) table, then a **nested** golden section (best x at each β,
 then best β) so what it finds is a 2D maximum and not the best x along a guessed β. CLI
@@ -677,14 +694,20 @@ run this rather than read the number here:
   reproduced with worst error `0.00e+00`, and run A's grid maximum
   (`0.2360436749508` at β = 1, x = 0.12875) lands just below `C*` — as it must, since the
   grid has no column at `x = 0.1486`. Skipped silently if the `.jld2` is gone.
+  **The stored value is also `C(2, 0.12875) = 0.23604367495075856` exactly**, so this
+  check now runs against algebra as well as against itself.
 
-**β = 1 is optimal at every x**, not just at the peak: `C_adia` depends on β only through
-`b = β + 1/β ≥ 2` and decreases monotonically in `b` throughout the entangled region.
-Asymmetry also *lowers* the optimal pump — `x_opt` = 0.1486 at β = 1, 0.107 at β = 2,
-0.042 at β = 10. Both statements are `files_online/06_concurrence.md` §6; the closed form
-there agrees with `run_adia` to 13 digits at both `x*` and run A's `x = 0.12875` grid
-point, which is a stronger cross-check on `H_adia`/`J_adia` than anything in this repo
-alone, since the two were derived independently.
+**β = 1 is optimal at every x — PROVEN**, not just at the peak and no longer only sampled.
+`file_concurrence/concurrence_adia.md` §10 establishes `dC/du < 0` on the entire physical
+window for every `x ∈ (0, x_c)`, where `u = b = β + 1/β`, so β = 1 is the *unique* global
+maximiser. The older route — `C_adia` depends on β only through `b ≥ 2` and decreases
+monotonically in `b` — is `files_online/06_concurrence.md` §6 and remains a second
+independent derivation. Asymmetry also *lowers* the optimal pump: `x_opt` = 0.1486 at
+β = 1, 0.107 at β = 2, 0.042 at β = 10 (`files_online/06` §6; §10.7's closed form is the
+`u = 2` slice only, so it does not cover the β ≠ 1 entries). `files_online`'s closed form
+agrees with `run_adia` to 13 digits at both `x*` and run A's `x = 0.12875` grid point —
+a stronger cross-check on `H_adia`/`J_adia` than anything in this repo alone, since the
+two were derived independently, and `file_concurrence` is now a third such route.
 
 For contrast, the **full** model peaks elsewhere and higher: `C = 0.29675` at `x = 0.291`,
 `β = r = 1`, `ξ = 2.75` (`files_online/07`), i.e. 25% above the adiabatic maximum at
@@ -781,7 +804,7 @@ Four things established before the mapping run was stopped:
   coming down. So a validity boundary must be the **first upcrossing**, not the last point
   that happens to satisfy the bound — the latter would call that cell valid to ξ = 0.5
   while hiding a 10% error inside.
-- **Above `x* = 0.4839` the concurrence criterion is not merely violated, it is
+- **Above `x_c = 0.4839` the concurrence criterion is not merely violated, it is
   undefined.** `C_adia = 0` exactly there, so at small ξ both models give ~0 (a 0/0
   relative error) and at any larger ξ the error is 100% by construction. That is a
   *qualitative* failure of the elimination, and no tolerance is ever met at any coupling.
@@ -899,10 +922,12 @@ first sense. Reconcile before either becomes a figure.
 
 Results there that bear directly on this repo:
 
-- **The `x* = 0.48388826` entanglement threshold** (root of `x³ − 2x² + 9x − 4`) for the
+- **The `x_c = 0.48388826` entanglement threshold** (root of `x³ − 2x² + 9x − 4`) for the
   adiabatic model at β = 1, and the `b = β + 1/β < b_max(x)` boundary at general β. This
   is the closed form behind the `C_adia = 0` dead zone documented under the (r, ξ) sweep —
-  the empirical scan there just rediscovers it.
+  the empirical scan there just rediscovers it. **`file_concurrence/concurrence_adia.md`
+  §3.3 derives the same cubic independently**, without the `√x` substitution, and its §4
+  gives `b_max(x)` in closed form; the two projects agree.
 - **The full model's concurrence maximum**: `C = 0.29675` at `x = 0.291`, `β = r = 1`,
   `𝒜 = 2.75` (i.e. **this repo's ξ = 2.75**), 25% above the adiabatic maximum of 0.2376.
   Sweep 2's `ξ_range = (0.1, 1.0)` **excludes it**; sweep 3's `(0.2, 5.0)` brackets it.
@@ -917,6 +942,135 @@ Results there that bear directly on this repo:
   embeds qubit 1 at position 3 and qubit 2 at position 4, the *opposite* ordering. Both
   agree that concurrence, purity and trace distance are invariant under the exchange, so
   nothing currently computed here is affected — but any per-qubit population would be.
+
+## `file_concurrence/` — closed-form analysis of the adiabatic concurrence
+
+One file, `concurrence_adia.md` (~1220 lines, 56 KB, rev. 4), a handoff document that
+solves the adiabatic model's concurrence in closed form. It is **not** part of
+`files_online/` and has no `claude.md` of its own — **this** file governs it. Tracked by
+git as of the `.gitignore` exception described under Conventions; watched by the session
+hook.
+
+**Conventions match this repo exactly**, which is the opposite of the `files_online/`
+situation and worth stating plainly: it defines `x = 4η²/(κ_1κ_2)` and
+`β = g_1²κ_2/(g_2²κ_1)` identically (its line 125), and ξ, r, μ, α never appear as
+physical parameters at all — because `ρ_adia` does not depend on them (proved under the
+(r, ξ) sweep above). Nothing needs reconciling before it becomes a figure. Two local
+traps only:
+
+- **⚠ `x*` means the argmax there, not the threshold.** That file uses `x_c` for the
+  0.48389 entanglement threshold and `x*` for the 0.14855 argmax. **This file has been
+  brought into line with it** — `x_c` is the threshold everywhere below, `x*` the argmax.
+  Older prose and any figure captions predating this may still say `x*` for 0.48389.
+- `alpha`/`beta` in its §10.3 are the coefficients of `L = alpha(x)·u + beta(x)`, not the
+  physical β. Confined to that subsection.
+
+**Everything is done in `u = β + 1/β ≥ 2`**, and that substitution is the whole reason the
+file works. It makes the `β ↔ 1/β` symmetry automatic (`u = 2` is exactly β = 1), and
+turns the concurrence into
+
+```
+C(u,x) = 2[ v·g − sqrt(S) ] / D      v = sqrt(u+2),  D linear in u,  S quadratic in u
+```
+
+### Result 1 — existence, PROVEN (§3)
+
+`D > 0`, so `sign C = sign Φ` with `Φ = (u+2)g² − S`, and **`Φ` is a downward parabola in
+u**. That single fact carries the argument:
+
+- `Φ(2,x) > 0 ⟺ x³ − 2x² + 9x − 4 < 0`, giving **`x_c = 0.4838882550`** — the same
+  threshold `files_online/06` reaches, but derived without the `√x` substitution, which
+  makes the x-cubic the cleaner object.
+- **No-revival lemma:** the parabola's vertex crosses `u = 2` at `x_v ≈ 0.20813`, and
+  **`x_v < x_c` is the load-bearing inequality.** Had it gone the other way there would be
+  a band `(x_c, x_v)` where C vanishes at β = 1 but revives at larger asymmetry. That band
+  is empty.
+- **Theorem.** `x ≥ x_c` ⟹ `C_adia = 0` for every β. `x < x_c` ⟹ `C_adia > 0` exactly on
+  `u ∈ [2, u_c(x))`.
+
+### Result 2 — `u_c(x)` in closed form (§4)
+
+**This is the object this repo has nowhere.** The sweeps only ever see the dead zone as
+`C_adia = 0` cells on a grid; §4 gives its boundary *in β* analytically. Two equivalent
+forms — §4.1 compact in `q1, p1, p2`, §4.2 with a degree-10 radicand (better for root
+isolation). Cross-checked against previously stored root-finding values: 577.76 / 18.4304
+/ 2.16302 at x = 0.02 / 0.1 / 0.4. Asymptotically `u_c ≈ 1/(4x²)` at small x — the window
+widens quadratically as the drive is turned down — and `u_c → 2` as `x → x_c⁻`, i.e. the
+window pinches shut at β = 1 exactly at threshold. In β the window is `(1/β₊, β₊)` with
+`β₊ = [u_c + sqrt(u_c²−4)]/2`, symmetric on a log axis as the symmetry demands.
+
+### Result 3 — the maximum, PROVEN (§10, new in rev. 4)
+
+> **`dC/du < 0` on the entire physical window, for every `x ∈ (0, x_c)`.**
+> Hence **β = 1 is the unique global maximiser**, and the maximum is `C(2,x)` below.
+
+This is the upgrade of what this file previously recorded as sampled. Two elementary
+structural facts do ~90% of the work, and they are the transferable part:
+
+- **`F_u < 0` identically** (§10.2). Since `dC/du = F_u/√F − G_u/√G`, this means
+  **`G_u ≥ 0` is by itself sufficient** — negative minus non-negative. No comparison of
+  magnitudes is ever needed.
+- **`L := S'D − 2SD'` is linear in u with strictly positive slope** (§10.3). So it has at
+  most one crossing and its sign on the window is decided by its value at `u = 2` alone;
+  the right endpoint never needs separate examination.
+
+Only the strip `x < x_dagger ≈ 0.0518` needs the heavy machinery, and even there only the
+degree-174 discriminant's *root-count constancy*, settled by one exact Sturm count at
+`x = 1/50`. **The cheap structural fact beat the expensive computation** — the planned CAD
+existential was never run.
+
+### Result 4 — `C(2,x)` in closed form (§10.7), and a three-way cross-check
+
+> **`C_adia(β=1, x) = [ 2√x (1−x) − x(1+x) ] / [ 2(x²+1) ]`**
+
+Its numerator vanishing recovers the same Cardano cubic as §3.3, and its argmax is
+`x* = (t*)²` where `t*` is the root of `R(t) = t⁶ + t⁵ − 3t⁴ − 2t³ − 3t² − t + 1`. **So
+`adia_concurrence_max.jl`'s numerical `x* = 0.148550` now has an exact algebraic source.**
+
+Checked against this repo's own stored numbers — it reproduces them to the last digit:
+
+| from `C(2,x)` | value | this repo's number | source |
+|---|---|---|---|
+| `C(2, 0.12875)` | 0.23604367495075856 | 0.2360436749507588 | run A's stored `C_adia` max |
+| `C(2, x*)` | 0.23761539689930783 | 0.2376153969 | `adia_concurrence_max.jl` |
+| `C(2, 0.3663)` | 0.11752557550041336 | 0.118 / 0.1175 | the β-table under the (r, ξ) sweep |
+| `x*` | 0.1485501998979953 | 0.148550 | `adia_concurrence_max.jl` |
+| `x_c` | 0.48388825504305466 | 0.48388826 | this file, and `files_online/06` |
+
+That is **three independent routes agreeing**: hand-plus-sympy algebra, this repo's
+numerical `run_adia` + Wootters, and `files_online`'s separate analytics. Reproduce it in
+one line if you doubt it:
+
+```bash
+python3 -c "import math
+C=lambda x:(2*math.sqrt(x)*(1-x)-x*(1+x))/(2*(x*x+1))
+print(C(0.12875), C(0.1485501998979953), C(0.3663))"
+```
+
+### ⚠ What is NOT verified (its own §10.8 — read before quoting)
+
+- **Sections 2–4 are hand-derived and CAS-unconfirmed.** Its §7 Mathematica block has
+  **never been run.** §10 is built on top of §2's element set and inherits any error in it.
+- **§10 is verified in one CAS only** (sympy). A second engine is on its own to-do list.
+- Its §1.2 domain claim (`x ∈ (0,1)` from the below-threshold condition) is flagged by the
+  author as not checked against a specific equation in a specific reference, and its §1.3
+  Yu–Eberly X-state citation as lacking a verified equation number. Do not put either in
+  front of a supervisor as sourced.
+
+Against that: the closed forms reproduce this repo's independent numerics to 14 digits
+(Result 4), which is a stronger check on the element set than anything internal to either
+project — a wrong `ρ_adia` would not land on `run_adia`'s answer by accident. Two real
+errors were caught during its development by exactly that kind of spot-evaluation (a
+`sqrt(S)(2)` off by a factor of x; a wrong coefficient in `W_old`).
+
+### The methodological warning worth importing (§5.2)
+
+**Sign-preserving transformations are not extremum-preserving.** `Φ`, `N` and `C` differ by
+strictly positive factors, so they share every *sign* and none of their *critical points*.
+Explicit counterexample at x = 0.11: `N` is larger off-centre (0.412056 vs 0.411708) while
+`C` is smaller (0.218355 vs 0.231331) — `argmax N ≠ argmax C`, demonstrably. Its §3
+existence proof is safe precisely because existence only needs a sign. This repo computes
+concurrence as a ratio too, so the same trap is reachable here.
 
 ## Conventions worth not breaking
 
@@ -939,16 +1093,29 @@ Results there that bear directly on this repo:
   are not tracked. A new non-`.jl` file needs an explicit `!` line. **Git does not descend
   into an ignored directory**, so the `!*.jl` exception never reaches subdirectories —
   `files_online/` is entirely untracked and is *not* on GitHub, notes and `.py` scripts
-  included. Everything tracked is the top-level `.jl`, `CLAUDE.md`, `Project.toml`,
-  `.gitignore` — 19 files once sweep 3's three new `.jl` are committed (`git ls-files | wc -l`
-  is the answer, not this sentence; it has drifted before).
+  included. **`file_concurrence/` is the one exception that does reach into a
+  subdirectory**, and it takes *two* lines to do it:
+
+  ```gitignore
+  !file_concurrence/
+  !file_concurrence/*.md
+  ```
+
+  The directory must be re-included first. A bare `!file_concurrence/concurrence_adia.md`
+  is **inert** — git never descends far enough to consider it — and it fails silently, so
+  test with `git add --dry-run`, not with `git check-ignore`. (`check-ignore -v` exits 0
+  here and prints the *negation* pattern; that is a match report, not an ignore verdict,
+  and it reads exactly like a failure.) Everything tracked is the top-level `.jl`,
+  `CLAUDE.md`, `Project.toml`, `.gitignore` and `file_concurrence/concurrence_adia.md` —
+  20 files (`git ls-files | wc -l` is the answer, not this sentence; it has drifted
+  before).
 - **`origin` is `https://github.com/Yash-27/JC_TMS_ADIA.git`** — this working directory
   *is* that repo, so there is nothing to clone into a subfolder. GitHub's tree is
-  `.gitignore`, `CLAUDE.md`, `Project.toml` and the top-level `.jl`. No `.py`, no
-  `files_online/`, no `.jld2` — and `origin/main` is an ancestor of local HEAD, so
-  everything there is already here (though local is currently ahead by several commits). **The `.py` files and the second `claude.md` are in
-  `files_online/`, which is local-only**; if you expect to find them on GitHub, they are
-  not there yet.
+  `.gitignore`, `CLAUDE.md`, `Project.toml`, the top-level `.jl`, and
+  `file_concurrence/concurrence_adia.md`. No `.py`, no `files_online/`, no `.jld2` — and
+  `origin/main` is an ancestor of local HEAD, so everything there is already here. **The
+  `.py` files and the second `claude.md` are in `files_online/`, which is local-only**; if
+  you expect to find them on GitHub, they are not there yet.
 
 ## Session start — `.claude/session-status.sh`
 
@@ -958,25 +1125,37 @@ stdout becomes Claude's opening context. Three sections:
 1. **GIT** — `git fetch`, then ahead/behind vs upstream (falling back to `origin/main`),
    a specific flag when the working copy's `CLAUDE.md` has drifted from the pushed one,
    and the uncommitted-file list capped at 20.
-2. **CONTENT** — `shasum` inventory of `files_online/`, diffed against
+2. **CONTENT** — `shasum` inventory of the prose directories named in `NOTES_DIRS`
+   (currently `files_online file_concurrence`), diffed against
    `.claude/.content-manifest` from the previous session, reported as ADDED / REMOVED /
-   MODIFIED. This section exists because **git cannot see that directory at all** — it is
-   ignored, and git does not descend into ignored directories.
+   MODIFIED. **Adding a directory means editing that one variable and nothing else**: the
+   manifest stores full relative paths, so a new root's files simply appear as ADDED on
+   the next run. Missing directories are filtered out before the `find` (which errors on
+   a missing root) and reported on a `not present:` line; all four combinations of the two
+   directories are verified to exit 0.
 3. **READ LIST** — names the changed files and instructs Claude to open them, plus the
-   reminder that `files_online/claude.md` governs that project and inverts `ξ`.
+   reminder that `files_online/claude.md` governs that project and inverts `ξ`, while
+   `file_concurrence/` has no `claude.md`, shares this repo's `x` and `β`, and uses `x*`
+   for the argmax (the sense this file now uses throughout).
+
+Two reasons both directories are hashed even though only one is git-invisible: this
+section reports **content drift since the last session**, which is a different question
+from git's "is it committed" — a file edited *and committed* between sessions is clean to
+git and still unread by Claude.
 
 **It reports changes rather than pasting content, deliberately.** `files_online/` is
-~138 KB (~35k tokens) and `CLAUDE.md` is another 57 KB the harness already loads every
-session; dumping both unconditionally would spend a third of a context window re-reading
-unchanged text. Steady-state cost is ~220 tokens. After an edit, Claude is pointed
-straight at what moved and reads it in full.
+~138 KB (~35k tokens), `file_concurrence/` another ~56 KB (~14k), and `CLAUDE.md` a
+further 57 KB the harness already loads every session; dumping all of it unconditionally
+would spend most of a context window re-reading unchanged text. Steady-state cost is ~230
+tokens. After an edit, Claude is pointed straight at what moved and reads it in full.
 
 **`fetch` only moves remote-tracking refs** — never merges, rebases, or touches the
 working tree, so the hook cannot lose an edit; pulling is left to you. It never exits
-non-zero, so no network / no remote / no `files_online/` still starts a session. The only
-file it writes is its own manifest. Verified against all four paths: first run, unchanged,
-modified, added+removed. `.claude/` is itself ignored by the deny-by-default rule, so none
-of this is tracked or pushed.
+non-zero, so no network / no remote / neither prose directory still starts a session. The
+only file it writes is its own manifest. Verified against all four content paths (first
+run, unchanged, modified, added+removed) and against all four directory-presence
+combinations. `.claude/` is itself ignored by the deny-by-default rule, so none of this is
+tracked or pushed.
 
 ## Scheduler in `run_sweep`
 
