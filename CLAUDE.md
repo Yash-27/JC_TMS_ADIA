@@ -7,7 +7,7 @@ model** reproduces the **full 4-body model** across a 2D parameter sweep.
 
 ## Running
 
-Two sweeps, each with its own config and plot driver, sharing everything below them.
+Three sweeps, each with its own config and plot driver, sharing everything below them.
 
 ```bash
 # sweep 1 -- the (β, x) plane at fixed κ_1, κ_2, g_2
@@ -19,18 +19,23 @@ julia --project=. compare_runs.jl        # two (β, x) runs against each other
 julia --project=. -t auto run_r_xi.jl
 julia --project=. run_plot_r_xi.jl
 
+# sweep 3 -- the (x, ξ) plane at fixed β = r = 1   (~1h45m: see the cost note)
+julia --project=. -t auto run_x_xi.jl
+julia --project=. run_plot_x_xi.jl
+
 # one-off parameter-set tools, no sweep
 julia --project=. -t auto compare_param_sets.jl
-julia --project=. scale_invariance_test.jl [a b c]
+
 
 # where the adiabatic concurrence peaks -- adiabatic model only, seconds, no threads
 julia --project=. adia_concurrence_max.jl [x_lo x_hi β_lo β_hi len]
 ```
 
-Both `run_jc_pump_disp_asy.jl` and `run_r_xi.jl` have a top-level `begin` block at the
-bottom that executes the whole sweep on include. There is no `main()` guard —
-`include`ing either one *runs* it. That is why the observables live in `observables.jl`
-rather than inside a runner: neither runner can include the other to borrow code.
+All three of `run_jc_pump_disp_asy.jl`, `run_r_xi.jl` and `run_x_xi.jl` have a top-level
+`begin` block at the bottom that executes the whole sweep on include. There is no
+`main()` guard — `include`ing any one of them *runs* it. That is why the observables live
+in `observables.jl` rather than inside a runner: no runner can include another to borrow
+code.
 
 Threads matter a lot: the sweep is thread-parallel and `-t auto` (or `-t N`) is the
 difference between minutes and hours. `BLAS.set_num_threads(1)` is set deliberately at
@@ -48,22 +53,22 @@ include time to stop BLAS from oversubscribing inside the `@threads` loop — do
         └─ observables.jl       Obs / OBSERVABLE_REGISTRY / select_observables /
                                 analyze / summarize
                  │
-    ┌────────────┴────────────────────────────┐
-    │                                         │
-config_jc_pump_disp_asy.jl              config_r_xi.jl
-run_jc_pump_disp_asy.jl                 run_r_xi.jl
-   sweeps (β, x) at fixed κ, g_2           sweeps (r, ξ) at fixed x, β
-   -> results_k1_*_k2_*_g2_*.jld2          -> results_rxi_*.jld2
-    │                                         │
-    ├─ run_plot.jl                            └─ run_plot_r_xi.jl
+    ┌────────────┴───────────────┬─────────────────────────┐
+    │                            │                         │
+config_jc_pump_disp_asy.jl  config_r_xi.jl          config_x_xi.jl
+run_jc_pump_disp_asy.jl     run_r_xi.jl             run_x_xi.jl
+  sweeps (β, x)               sweeps (r, ξ)           sweeps (x, ξ)
+  at fixed κ, g_2             at fixed x, β           at fixed β = r = 1
+  -> results_k1_*_k2_*_g2_*   -> results_rxi_*        -> results_xxi_*
+    │                            │                         │
+    ├─ run_plot.jl               └─ run_plot_r_xi.jl        └─ run_plot_x_xi.jl
     └─ compare_runs.jl  (two .jld2)
                  │
         plotting_functions.jl   plot_map / save_fig / axis_spec,
-                                included by all three plot drivers
+                                included by all four plot drivers
 
     STANDALONE -- no sweep, no .jld2
         compare_param_sets.jl   pairwise D between named parameter sets
-        scale_invariance_test.jl  randomized fibre + perturbation control
         adia_concurrence_max.jl   argmax of C_adia over (x, β), via run_adia
 ```
 
@@ -86,15 +91,21 @@ dimensionless numbers exist:
 
 | symbol | definition | meaning | swept by |
 |---|---|---|---|
-| `x` | `4η² / (κ_1 κ_2)` | drive relative to the linear OPO threshold | sweep 1, linear |
+| `x` | `4η² / (κ_1 κ_2)` | drive relative to the linear OPO threshold | sweep 1, linear; **sweep 3, linear** |
 | `β` | `(g_1² κ_2) / (g_2² κ_1)` | Purcell-rate asymmetry between the arms | sweep 1, log10 |
 | `r` | `κ_1 / κ_2` | cavity-decay asymmetry | sweep 2, log10 |
-| `ξ` | `4 g_1 g_2 / (κ_1 κ_2)` | coupling strength relative to decay | sweep 2, linear |
+| `ξ` | `4 g_1 g_2 / (κ_1 κ_2)` | coupling strength relative to decay | sweep 2, linear; **sweep 3, log10** |
 
-The two sweeps are exact complements: together the four coordinates are a complete set,
+Sweeps 1 and 2 are exact complements: together the four coordinates are a complete set,
 so sweep 2 covers precisely the directions sweep 1 holds fixed, with no overlap and no
 gaps. **`ξ` is the adiabatic elimination's own small parameter** — the elimination is
 the `ξ → 0` limit — which is why it is the physically informative axis.
+
+**Sweep 3 deliberately overlaps both**, and that is its point: it is the `(x, ξ)` plane at
+`β = r = 1`, i.e. the two coordinates that actually control the elimination, with both
+asymmetries switched off. Sweep 1 cannot deliver it (ξ is confounded with β there — see
+below) and sweep 2 pins x. The three planes intersect in lines, not regions, and those
+lines are used as regression tests: sweep 3's `ξ = 1` row *is* run A's `β = 1` row.
 
 `(g_1, g_2, κ_1, κ_2, η) → (x, β, r, ξ, scale)` is a **bijection**. Two raw parameter
 sets therefore agree on all four coordinates *if and only if* one is a uniform rescaling
@@ -222,6 +233,108 @@ Three things to read off it:
   makes half the r axis redundant. `β = 0.5` buys non-redundant r coverage — the one
   advantage it has over `β = 1`.
 
+## The (x, ξ) sweep — `run_x_xi.jl`
+
+Sweeps `(x, ξ)` at fixed `β = r = 1`, same `κ_geo = sqrt(κ_1 κ_2) = 2` pinning as sweep 2.
+At `r = β = 1` the inversion collapses to one rate per axis and nothing else moving:
+
+```
+κ_1 = κ_2 = κ_geo = 2                   <- constant across the whole grid
+η   = (κ_geo/2) sqrt(x)                 <- the x axis, and only it
+g_1 = g_2 = (κ_geo/2) sqrt(ξ)           <- the ξ axis, and only it
+```
+
+**Why this plane, given the other two exist.** Sweep 1 confounds β with ξ (`ξ ∝ sqrt(β)`
+at fixed κ and `g_2`) and structurally cannot separate them; sweep 2 pins `x = 0.3663`
+and stops at `ξ = 1`. Neither shows the error in the *(drive, coupling)* plane at
+symmetric arms — which is where the elimination's validity actually lives, since `ξ` is
+its own small parameter and `x` is what its `4η² − κ_1κ_2` denominators blow up on. Two
+independently known landmarks sit inside this box and on no existing grid: the **full
+model's optimum** (`C = 0.29676` at `x = 0.291, ξ ≈ 2.79, β = r = 1`) and the **adiabatic
+entanglement threshold** `x* = 0.48389`.
+
+**Grid layout: ROW = ξ (horizontal, log10), COLUMN = x (vertical, linear)** — grids are
+`[N_ξ, N_x]`. This keeps the repo-wide "row coordinate is the horizontal/log axis"
+convention, so `flatten_grid` and `plot_map` are reused unchanged.
+
+`ξ_range = (0.2, 5.0)` rather than `(0.1, 5.0)`, and the reason is not aesthetic:
+**reciprocal endpoints put `ξ = 1` exactly on the grid** at len 7 (`0.2, 0.3415, 0.5833,
+1.0, 1.7145, 2.9375, 5.0`). `(0.1, 10.0)` would work too; `(0.1, 5.0)` would not.
+
+### Two self-tests, both free, both consequences rather than assertions
+
+**1. `ρ_adia` is a function of x alone here**, so every `_adia` panel must be constant
+*down each column* (across ξ) and must vary *across* columns. Same argument as sweep 2's
+`check_adia_flat` in the complementary direction: `g ∝ sqrt(ξ)` makes every term of
+`L_adia` carry one factor of ξ, so `L_adia → ξ L_adia` and the kernel is unchanged; β and
+r are fixed, leaving x. `check_adia_x_only` asserts both halves — the second half matters,
+since a panel flat in *both* directions would mean x is not reaching the model at all, and
+a column-only check cannot see that. It then re-derives each column value from a direct
+`run_adia` call, which costs microseconds and checks the sweep's inversion against the
+model rather than against itself.
+
+**2. The `ξ = 1` row is already on disk.** With `β = r = 1` and `κ_geo = 2`, `ξ = 1` gives
+`κ_1 = κ_2 = 2`, `g_1 = g_2 = 1`, `η = sqrt(x)` — run A's `β = 1` row, and all seven x
+values are on run A's own x grid. So `check_against_run_A` compares row 4 against
+`results_k1_2.0_k2_2.0_g2_1.0.jld2` directly: adiabatic to the last bit, full to ~1.5e-8
+(`steadystate.iterative`'s unseeded-RNG floor). **This is the load-bearing test** — it
+validates the coordinate inversion, the truncation and the driver in one shot, including at
+the expensive dim-4096 point. Verified on a 3×3 pilot grid: `concurrence_adia` `0.0e+00`,
+`concurrence_full` `3.3e-08`, `tracedist` `1.7e-08`.
+
+**Mind the two grids' index orders when reading that check.** This sweep is `[ξ, x]`, run A
+is `[β, x]`, so the reference entry is `ref[β_index, x_index]`. The first version of the
+check had it transposed and reported mismatches of order the observable itself — which is
+what the check is for, but the trap is worth naming: both grids are square at len 7, so no
+assertion catches it.
+
+### Cost — measured, and the reason this driver enforces `MAX_BIG`
+
+**No `results_xxi_*.jld2` exists yet** — the driver and its self-tests are verified (a 3x3
+pilot grid, plus the checks below) but the full 7x7 run has not been completed and stored.
+
+Pass 1 on the full grid, measured: **42 points at dim 900, 7 at dim 4096**, the seven being
+the whole `x = 0.7225` column. The truncation there is set by η, not g, so it is dim 4096 for
+**every ξ from 0.1 to 5** — raising ξ to 5 costs nothing in Hilbert dimension. This is the
+truncation cliff documented further down, and it is the single cost fact governing the run.
+
+Measured single-threaded, `-t 1`, one point each:
+
+| point | dim | time | peak RSS |
+|---|---|---|---|
+| `x = 0.6038, ξ = 5` | 900 | 16.4 s | — |
+| `x = 0.7225, ξ = 1.36` | 4096 | **849 s** | **5.04 GiB** |
+
+**5 GiB for one solve is why this driver has a real counting semaphore** (`Base.Semaphore`,
+`MAX_BIG = 1`) instead of sweep 1 and 2's spawn-time preference. Two concurrent big solves
+would be 10 GiB before the small queue's contribution, on a 16 GiB machine — known issue 6
+stops being a tail inefficiency and becomes an OOM. The queue preference is kept (it starts
+the expensive points early, which is what keeps the tail short); the semaphore is what
+bounds concurrency. **The fix lives in this driver only** — see issue 8.
+
+Budget: 42 × ~16 s ≈ 11 min of CPU, a couple of minutes wall on 8 threads, plus 7 × 14 min
+serialized ≈ **1 h 45 m total, essentially all of it the last x column**. Dropping
+`x_range` to `(0.01, 0.60375)` keeps the whole grid at dim 900 and the run at minutes; that
+is the trade if you want a fast turnaround.
+
+Two operational things this driver adds and the other two lack: `flush(stdout)` after every
+progress line, and a `PARTIAL_XXI` checkpoint of both state grids written after **every**
+completed point (deleted on success). CLAUDE.md records 45 minutes of solves lost to
+buffered stdout under a shell `timeout`; with single points in the 14-minute range, an
+all-or-nothing write at the end is the same trap. Recovering from a checkpoint means loading
+it and calling `analyze` — the states are stored raw, no observables.
+
+### Expected structure
+
+- `concurrence_adia` is **exactly 0 for x ≥ 0.485** (three of seven columns) — the
+  adiabatic entanglement threshold at β = 1. There `concurrence_diff` becomes an exact
+  duplicate of `concurrence_full`, as in sweep 2's recorded run. Analytic boundary, not a
+  bug; `tracedist` stays fully informative.
+- `concurrence_full` should peak near `x ≈ 0.29, ξ ≈ 2.9` at `C ≈ 0.297`.
+- `tracedist` should grow monotonically in ξ at every x, **sub-linearly** — `D ∝ ξ` holds
+  only below `ξ ≈ 0.01` and this grid is deliberately in the saturating region. Do not read
+  a slope off it and extrapolate to `ξ → 0`.
+
 ## Adding an observable
 
 Three edits, nothing else:
@@ -289,16 +402,27 @@ Hardcoded on purpose in `plot_map`, because there is only one right answer:
 - NaN points dropped rather than plotted
 - colorbar forced on (GR does not infer it from `marker_z`)
 
-**Which** coordinates those are is per-file, not hardcoded, since there are now two
+**Which** coordinates those are is per-file, not hardcoded, since there are now three
 sweeps. `axis_spec(d)` returns `d.axes` when the loaded run carries one — `load_results_rxi`
-attaches `(xvals, yvals, xlab, ylab, xsc, ysc)` for the (r, ξ) plane — and otherwise
-falls back to the original β/x behaviour. The fallback is load-bearing: the three stored
-(β, x) `.jld2` files predate the field, and `compare_runs.jl` hands `plot_map` a bare
-`(β_vals = …, x_vals = …)` tuple it builds inline. Both still work untouched.
+attaches `(xvals, yvals, xlab, ylab, xsc, ysc)` for the (r, ξ) plane, `load_results_xxi`
+for the (x, ξ) plane — and otherwise falls back to the original β/x behaviour. The fallback
+is load-bearing: the three stored (β, x) `.jld2` files predate the field, and
+`compare_runs.jl` hands `plot_map` a bare `(β_vals = …, x_vals = …)` tuple it builds inline.
+Both still work untouched.
 
-`param_string` branches on the same distinction, detecting `:κ_geo`. For a (β, x) run it
-prints `κ_1, κ_2, g_2`; for an (r, ξ) run those all vary per grid point, so printing them
-would be actively wrong, and it prints the fixed `x, β, sqrt(κ_1κ_2)` instead.
+`param_string` branches on the same distinction. It **used to** detect `:κ_geo` alone,
+which was sufficient while (r, ξ) was the only dimensionless-coordinate sweep; the (x, ξ)
+params tuple has `κ_geo` too, so that test now sends it down the (r, ξ) branch and reaches
+for a nonexistent `p.x_fixed`. The branch is therefore keyed on **which coordinate is
+fixed**: `:x_fixed` → the (r, ξ) form, `:r_fixed` → the (x, ξ) form. Adding a fourth sweep
+means adding a branch here, and the failure mode is a `no field` error rather than a wrong
+label — which is the right way round.
+
+- (β, x) run → prints `κ_1, κ_2, g_2`
+- (r, ξ) run → prints `x, β, sqrt(κ_1κ_2)`; κ and g all vary per grid point, so printing
+  them would be actively wrong
+- (x, ξ) run → prints `β, r, sqrt(κ_1κ_2)`; κ_1 and κ_2 happen to be constant too (r is
+  fixed), but η and g move, one per axis
 
 `run_plot_r_xi.jl` carries two per-key overrides that `run_plot.jl` does not.
 `:concurrence_diff` gets `sym_clims` + `:balance` (issue 2's prescription, applied at the
@@ -309,6 +433,14 @@ The guard is **relative** — an `lo == hi` test does not catch a spread in the 
 and widens a flat panel to `(0, 2v)`. Anchoring at zero rather than a narrow band around
 `v` also keeps GR's tick labels short enough not to overprint the colorbar title, the
 same collision `si_scale` works around in `compare_runs.jl`.
+
+`run_plot_x_xi.jl` carries **byte-identical copies of both helpers**, for the same reason
+the schedulers are duplicated: `plotting_functions.jl` is the only file both plot drivers
+include, and the drivers cannot include each other. On that plane `:concurrence_adia` is
+*not* flat (it varies with x), so `flat_safe_clims` passes it through unchanged and only
+earns its keep if the sweep is ever narrowed to one x column. **Lifting `overrides` and
+`flat_safe_clims` into `plotting_functions.jl` is the clean fix for issue 2** and would
+serve all three drivers at once; until then the two copies must stay in step.
 
 Per-figure: `title`, `colorbar_title`, `clims`, `markersize`, `cmap`, `show_params`.
 
@@ -325,9 +457,11 @@ PSD, so Wootters' construction doesn't apply to it. The labels say what is actua
 computed; keep it that way.
 
 Figures go to `Full_vs_Adia/` (what `run_plot.jl` passes), `Full_vs_Full/`
-(`compare_runs.jl`) and `Full_vs_Adia_rxi/` (`run_plot_r_xi.jl`), PDF only. `save_fig`'s
-own default is `figures3/`, and `figures/`, `figures2/` also exist from earlier runs —
-six destinations, none tracked by git.
+(`compare_runs.jl`), `Full_vs_Adia_rxi/` (`run_plot_r_xi.jl`) and `Full_vs_Adia_xxi/`
+(`run_plot_x_xi.jl`), PDF only. `save_fig`'s own default is `figures3/`, and `figures/`,
+`figures2/` also exist from earlier runs — seven destinations, none tracked by git.
+Note the `_xxi` filename suffix carries only `β, r, κ_geo`, so two (x, ξ) runs differing
+in `len` or either range overwrite each other's PDFs (the `.jld2` names do not collide).
 
 ## Comparing runs — `compare_runs.jl`
 
@@ -554,13 +688,136 @@ alone, since the two were derived independently.
 
 For contrast, the **full** model peaks elsewhere and higher: `C = 0.29675` at `x = 0.291`,
 `β = r = 1`, `ξ = 2.75` (`files_online/07`), i.e. 25% above the adiabatic maximum at
-roughly twice the pump. Note `ξ_range = (0.1, 1.0)` in `config_r_xi.jl` excludes it.
+roughly twice the pump. `config_r_xi.jl`'s `ξ_range = (0.1, 1.0)` excludes it, but
+**sweep 3 brackets it**: `ξ = 2.9375` and `x ∈ {0.2475, 0.3663}` are grid points there.
 
-## Parameter counting — `compare_param_sets.jl`, `scale_invariance_test.jl`
+## The full model's concurrence maximum — measured, script not retained
 
-Two standalone scripts. Neither sweeps, neither writes a `.jld2`, neither is on the path
-of anything else. They exist to establish that `ρ_full` is a function of exactly the four
-dimensionless coordinates.
+```
+C_full is maximal at  x = 0.2910,  β = 1,  r = 1,  ξ ≈ 2.79,  C = 0.296758
+realized as g₁ = g₂ = 1.66938, κ₁ = κ₂ = 2, η = 0.53944
+```
+
+**Independent confirmation of `files_online/07`**, which has `C = 0.29675` at `x = 0.291`,
+`β = r = 1`, `𝒜 = 2.75` — reached there analytically, reached here by solving the full
+cavity Liouvillian on a grid. Two codebases, agreeing to 5 digits. Compare the adiabatic
+optimum below: **the full model gets 25% more entanglement at roughly twice the pump**,
+and `config_r_xi.jl`'s `ξ_range = (0.1, 1.0)` excludes `ξ ≈ 2.8` entirely, so sweep 2 has
+never run near this point. **Sweep 3 does** — its `(x, ξ)` grid at `β = r = 1` reaches
+`ξ = 5` and brackets the optimum, which is a third independent route to the same number.
+
+**How many digits are real.** Two independent runs gave `C = 0.29675767` and `0.29675774`
+(Δ = 7e-08), the fitted `x` differing by 1e-06 and `ξ` by 6e-06 — that is
+`steadystate.iterative`'s unseeded-RNG floor at `reltol ≈ 1.5e-8`, the same one documented
+under `compare_param_sets.jl`. `β = r = 1` are exact (arm-swap symmetry, not a fit); `x` is
+good to ~3 figures; **`ξ` is soft** — ±5% in ξ costs only 2.7e-06 in C, so anything from
+ξ ≈ 2.6 to 2.9 is indistinguishable. That is why `files_online`'s `𝒜 = 2.75` and the
+numerical `2.787` are the same answer.
+
+Structure around the optimum, all measured:
+
+| coordinate | −5% | +5% |
+|---|---|---|
+| ξ | −2.6e-06 | −5.7e-05 |
+| x | −2.2e-04 | −2.0e-04 |
+| r | −6.4e-04 | −5.8e-04 |
+| β | −8.5e-04 | −7.7e-04 |
+
+β and r are sharply peaked at 1 and mirror-symmetric — at `x = 0.29, ξ = 2.75`,
+`C_full` runs 0.0886 / 0.1956 / **0.2968** / 0.1956 / 0.0886 over β = 0.25 … 4, and
+0.1095 / 0.2108 / **0.2968** / 0.2108 / 0.1095 over r = 0.25 … 4. The arm-swap symmetry
+`C(x,β,r,ξ) = C(x,1/β,1/r,ξ)` held to `1.1e-08`, the solver floor. **Truncation was
+verified**: re-solving the optimum at `N = 20` instead of 14 moved `C` by `−3e-09`.
+
+### The adiabatic model at that point
+
+```
+C_adia = 0.17943675   vs   C_full = 0.29675767     ratio 1.654
+D(ρ_full, ρ_adia) = 0.0779     purity 0.750 vs 0.633
+```
+
+**The elimination loses 39.5% of the entanglement that is actually there**, at the very
+point one would design around. Three things make this more than a single number:
+
+- **`ξ` and `r` are invisible to `ρ_adia`** — measured at the same `(x, β)` with
+  `(r, ξ)` = (1, 0.01), (1, 25), (7.3, 2.79), (0.05, 0.4): identical to **13 digits**.
+  Including at ξ = 25, two orders past where the elimination is derived. ξ *is* its
+  domain of validity, and the model cannot see ξ, so it cannot tell it is being misused.
+- **The point is not near a maximum of the adiabatic surface**: `∂C_adia/∂x = −0.717`
+  while `∂C_adia/∂β = 0` exactly (β = 1 is stationary by symmetry). `C_adia` there is also
+  24.5% below its own peak — **the two models want different pumps**, x = 0.291 vs 0.149.
+- **The error grows steeply in x while the full model sits flat**: across ±10% in x,
+  `C_full − C_adia` runs 0.0970 → 0.1173 → 0.1387 while `C_full` moves only
+  0.2959 → 0.2968 → 0.2960.
+
+**Method, if this is ever rebuilt.** Cost forces the shape: one full solve is ~12 s at
+dim 900, so a sequential 1D optimizer chain is hopeless (hundreds of *serial* solves,
+single-threaded). What worked: a (β, r) probe to establish β = r = 1 is optimal, a coarse
+(x, ξ) grid on that slice under `@threads`, a zoom grid, then a **2D quadratic fit to
+points already paid for** to get a sub-grid vertex for the price of one confirming solve —
+then a 4D ±5% peak test and a truncation check. ~11 min on 4 threads.
+
+## Validity of the elimination — framing and cost, script not retained
+
+**The obvious question is degenerate and must be refused.** `D(ρ_full, ρ_adia) → 0` as
+`ξ → 0` at *every* `(x, β, r)`, because that limit **is** the elimination. So `argmin D`
+is the whole `ξ = 0` hyperplane — and useless in practice, since `ξ → 0` sends the
+effective qubit-qubit rates to zero with it and the steady state is reached arbitrarily
+slowly. The meaningful object is the **level set** `{D ≤ ε}`, described by its boundary
+`ξ_max(ε; x, β, r)`: the largest coupling whose error stays within ε.
+
+Four things established before the mapping run was stopped:
+
+- **`D` is monotone and smooth in ξ, and saturates.** Log-log slopes at `(x,β,r)=(0.3,1,1)`
+  run 0.97 → 0.93 → 0.83 → 0.68 → 0.44 → 0.20 across ξ = 0.003 → 3. `D ∝ ξ` therefore
+  holds only below **ξ ≈ 0.01**; extrapolating that slope upward badly overestimates the
+  error, so any boundary must be *bracketed by measurements*, never extrapolated.
+- **The relative concurrence error is ~10× D**, because `|ΔC| ≲ 2D` but `C_full ≈ 0.18 < 1`.
+  Measured at `(0.3, 1, 1)`: `D = 2.5e-3` while `|ΔC|/C = 2.4e-2` at ξ = 0.01. **The
+  observable you would quote needs ξ roughly 5–10× smaller than the trace-distance
+  criterion suggests.**
+- **`|ΔC|/C_full` is non-monotone in ξ.** At `(0.3, 1, 4)` it rises to 0.105 at ξ = 0.15
+  and falls back to 0.047 by ξ = 0.5, because `C_full` crosses the ξ-independent `C_adia`
+  coming down. So a validity boundary must be the **first upcrossing**, not the last point
+  that happens to satisfy the bound — the latter would call that cell valid to ξ = 0.5
+  while hiding a 10% error inside.
+- **Above `x* = 0.4839` the concurrence criterion is not merely violated, it is
+  undefined.** `C_adia = 0` exactly there, so at small ξ both models give ~0 (a 0/0
+  relative error) and at any larger ξ the error is 100% by construction. That is a
+  *qualitative* failure of the elimination, and no tolerance is ever met at any coupling.
+
+Sample boundaries actually measured, at `x = 0.3, β = 1`:
+`ξ_max(D ≤ 0.01, 0.02, 0.05) = 0.047, 0.111, 0.483` at `r = 1`, and
+`0.035, 0.087, 0.362` at `r = 4` — asymmetry tightens the requirement.
+
+### The truncation cliff — a repo-wide cost fact worth keeping
+
+`estimate_truncation` holds everything up to `x = 0.62` in the `N = 14 / dim = 900`
+cluster, then jumps:
+
+| x | 0.50 | 0.55 | 0.60 | **0.62** | **0.65** | 0.68 | 0.70 |
+|---|---|---|---|---|---|---|---|
+| N | 14 | 14 | 14 | **14** | **24** | 27 | 29 |
+| dim | 900 | 900 | 900 | **900** | **2500** | 3136 | 3600 |
+
+Crossing it costs roughly **40× per solve** — 16× the state-vector length on a Liouvillian
+gap 2.8× smaller. This is the 900-vs-2704 clustering of issue 3, and it is the biggest
+cost discontinuity in the repo. Measured consequence: a 22-cell grid reaching `x = 0.70`
+ran **17 minutes without completing a single cell**, while the same grid capped at
+`x = 0.62` returned cells in 360–510 s. **Any new sweep touching x ≳ 0.63 must budget for
+this explicitly rather than discover it.**
+
+A second operational lesson from the same run: Julia buffers stdout when redirected, so a
+long job wrapped in a shell `timeout` can be killed having produced **nothing** — 45
+minutes of solves lost that way. Long runs need per-item `flush(stdout)` and incremental
+persistence, not an all-or-nothing write at the end.
+
+## Parameter counting — `compare_param_sets.jl`
+
+A standalone script. It does not sweep, does not write a `.jld2`, and is not on the path
+of anything else. It exists to establish that `ρ_full` is a function of exactly the four
+dimensionless coordinates. (A second script, a randomized version of the same test, was
+deliberately deleted — its results are not used anywhere.)
 
 ### `compare_param_sets.jl`
 
@@ -608,30 +865,15 @@ Three traps, all of which bit during development:
   bit-identical Liouvillian and `D = 0.00e+00` — indistinguishable from a test that
   varied nothing at all. Use 17.3.
 - **A null test needs a positive control.** `D ≈ 0` alone cannot distinguish "the state
-  is scale-invariant" from "this code ignores its input". `scale_invariance_test.jl`
-  section (b) supplies it: +1% in one invariant at fixed scale gives
-  `D = 1.9e-3, 3.2e-4, 9.9e-5, 1.7e-4` for `x, β, r, ξ` — five orders above the null.
+  is scale-invariant" from "this code ignores its input". There is no longer a script that
+  supplies one, so if you add a row expected to give `D ≈ 0`, add a second row that
+  perturbs one invariant by ~1% and must give `D` well above the `~1e-8` floor. Without
+  that pairing a passing null test proves nothing.
 
 The elimination error, `D(ρ_full, ρ_adia)` per set, is the scale the other two matrices
 should be read against. At the recorded points it is **0.10–0.15**, i.e. *larger* than
 any of the between-set distances. So those tables compare two models that are already far
 apart — `ξ ≈ 1` is nowhere near the `ξ → 0` limit the elimination is derived in.
-
-### `scale_invariance_test.jl`
-
-The randomized version: draws several base parameter sets, rescales each by non-dyadic λ,
-reports `D_fibre` against `D_self`. Sections `a` (fibre), `b` (positive control),
-`c` (that `estimate_truncation` is scale-invariant too, so both members of a pair are
-solved in the same Hilbert space).
-
-Two scope notes. It compares the **reduced** 2-qubit state, because `run_sim` traces out
-the cavities before returning and this file deliberately does not modify production code
-to do otherwise — the joint-state comparison would be strictly stronger, since two states
-can agree after tracing while the joint states differ. Consequently its section (b)
-numbers are **not** comparable to the joint-state values in
-`files_online/parameter_counting_test.py`. Section (c) is also weaker than it looks: every
-draw returned `(14, 14)`, which is `N_FLOOR + K_FLOOR_REGIME`, so a function returning a
-constant would pass it too.
 
 ## `files_online/` — parallel analytical project
 
@@ -663,7 +905,7 @@ Results there that bear directly on this repo:
   the empirical scan there just rediscovers it.
 - **The full model's concurrence maximum**: `C = 0.29675` at `x = 0.291`, `β = r = 1`,
   `𝒜 = 2.75` (i.e. **this repo's ξ = 2.75**), 25% above the adiabatic maximum of 0.2376.
-  Note the current `ξ_range = (0.1, 1.0)` **excludes it**.
+  Sweep 2's `ξ_range = (0.1, 1.0)` **excludes it**; sweep 3's `(0.2, 5.0)` brackets it.
 - **The exact arm-swap symmetry** `C(x,β,r,𝒜) = C(x,1/β,1/r,𝒜)`, which is what makes
   the β = 1 slice mirror-symmetric in `r ↔ 1/r`.
 - **`D ∝ μ` with α entering at first order**, i.e.
@@ -678,8 +920,13 @@ Results there that bear directly on this repo:
 
 ## Conventions worth not breaking
 
-- **Grids are `[N_β, N_x]`** — β is the *row* index, x the *column*. Every report,
-  observable matrix and plot assumes this.
+- **Grids are `[row, column]` with the row being the horizontal/log axis** — `[N_β, N_x]`
+  for sweep 1, `[N_r, N_ξ]` for sweep 2, `[N_ξ, N_x]` for sweep 3. Every report,
+  observable matrix and plot assumes it. Sweeps 1 and 3 both carry an x axis and both put
+  it in the *column*, but their rows are different coordinates (β vs ξ) — so comparing one
+  sweep's grid against another's means naming both indices explicitly, never reusing an
+  index. That is exactly the bug `check_against_run_A` shipped with on its first run.
+  Getting it backwards cannot be caught by an assertion: `len = 7` makes every grid square.
 - **NaN means "no data"**, everywhere. `nanmat()` prefills the state grids; observable
   grids prefill with `NaN`. A failed point becomes a gap in the heatmap instead of
   killing the run. Don't replace with zeros.
@@ -692,13 +939,14 @@ Results there that bear directly on this repo:
   are not tracked. A new non-`.jl` file needs an explicit `!` line. **Git does not descend
   into an ignored directory**, so the `!*.jl` exception never reaches subdirectories —
   `files_online/` is entirely untracked and is *not* on GitHub, notes and `.py` scripts
-  included. Only 15 files are tracked: the top-level `.jl`, `CLAUDE.md`, `Project.toml`,
-  `.gitignore`.
+  included. Everything tracked is the top-level `.jl`, `CLAUDE.md`, `Project.toml`,
+  `.gitignore` — 19 files once sweep 3's three new `.jl` are committed (`git ls-files | wc -l`
+  is the answer, not this sentence; it has drifted before).
 - **`origin` is `https://github.com/Yash-27/JC_TMS_ADIA.git`** — this working directory
-  *is* that repo, so there is nothing to clone into a subfolder. **GitHub's tree is 14
-  files**: `.gitignore`, `CLAUDE.md`, `Project.toml`, 11 `.jl`. No `.py`, no
+  *is* that repo, so there is nothing to clone into a subfolder. GitHub's tree is
+  `.gitignore`, `CLAUDE.md`, `Project.toml` and the top-level `.jl`. No `.py`, no
   `files_online/`, no `.jld2` — and `origin/main` is an ancestor of local HEAD, so
-  everything there is already here. **The `.py` files and the second `claude.md` are in
+  everything there is already here (though local is currently ahead by several commits). **The `.py` files and the second `claude.md` are in
   `files_online/`, which is local-only**; if you expect to find them on GitHub, they are
   not there yet.
 
@@ -922,23 +1170,36 @@ one just keeps big workers busy after the big queue empties. **The fix is a coun
 semaphore on in-flight big solves, not deleting the fall-through**, which would idle
 threads in the tail and trade one problem for another.
 
-### 8. `run_r_xi.jl` duplicates sweep 1's scheduler, and the two can drift
+**Fixed in `run_x_xi.jl` only** (sweep 3), exactly that way: a `Base.Semaphore(MAX_BIG)`
+acquired around the `run_sim` call for `dim ≥ BIG_DIM` points, in a `try/finally` so a
+thrown solve cannot leak a permit and deadlock the tail. The queue preference is kept.
+That driver had to fix it — its big points measured **5.04 GiB peak RSS each** at dim 4096,
+so on a 16 GiB machine the unenforced version is an OOM rather than a slowdown. **Sweeps 1
+and 2 still have the bug**; the fix is 6 lines and can be lifted from `run_x_xi.jl`.
 
-`run_sweep_rxi` is a near-copy of `run_sweep`: same two-pass structure, same atomic
-big/small work queues, same `take_job`, same ETA fit, same `try/catch` report block —
-roughly 200 lines. Only three things genuinely differ: the coordinate inversion, the cost
-model's gap factor, and the printf labels.
+### 8. The scheduler now exists in THREE near-identical copies
 
-It was written that way deliberately, to keep zero risk to a working sweep, and the
+`run_sweep_rxi` is a near-copy of `run_sweep`, and `run_sweep_xxi` is a near-copy of
+both: same two-pass structure, same atomic big/small work queues, same `take_job`, same
+ETA fit, same `try/catch` report block — roughly 200 lines each. Only a few things
+genuinely differ per copy: the coordinate inversion, the cost model's gap factor, the
+printf labels, and (in sweep 3 only) the semaphore, the `flush(stdout)` calls and the
+checkpoint write.
+
+They were written that way deliberately, to keep zero risk to a working sweep, and the
 observables were shared instead (`observables.jl`) because those *could* be lifted
-without touching the scheduler. But the consequence is real: **a fix to the scheduler in
-one file does not reach the other.** Issue 6 (`MAX_BIG` not enforced) is now present in
-both copies, and any future fix has to be applied twice.
+without touching the scheduler. But the consequence is real and now threefold: **a fix to
+the scheduler in one file reaches neither of the others.** The current concrete evidence:
+issue 6 is fixed in `run_x_xi.jl` and still present in the other two, and `flush(stdout)`
+plus incremental checkpointing — both responses to recorded data loss — exist only in the
+newest copy.
 
 The clean resolution is a `sweep_core.jl` taking `point_params(i,j) -> (κ_1,κ_2,g_1,g_2,η)`
-and `cost_factor(i,j)` as closures, with both drivers calling it. That is a real
-refactor of a file that currently works, so it should be done deliberately rather than
-opportunistically.
+and `cost_factor(i,j)` as closures, with all three drivers calling it. That is a real
+refactor of files that currently work, so it should be done deliberately rather than
+opportunistically — but note the verification is cheap and already exists: each sweep has a
+stored `.jld2` plus its own adiabatic self-test, and sweep 3's `ξ = 1` row must reproduce
+run A, so a migrated scheduler that is wrong will say so.
 
 ### 7. Smaller things
 

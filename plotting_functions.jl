@@ -22,11 +22,11 @@ using Printf
 #   - colorbar on (GR does not infer it from marker_z)
 #
 # WHICH coordinates those are is per-file, not hardcoded, because there are now
-# two sweeps: (β, x) from run_jc_pump_disp_asy.jl and (r, ξ) from run_r_xi.jl.
-# A loaded run carries an `axes` field describing its own axes; anything
-# without one -- the older .jld2 files, and the bare (β_vals, x_vals) tuples
-# compare_runs.jl builds -- falls back to the original β/x behaviour. See
-# axis_spec.
+# three sweeps: (β, x) from run_jc_pump_disp_asy.jl, (r, ξ) from run_r_xi.jl
+# and (x, ξ) from run_x_xi.jl. A loaded run carries an `axes` field describing
+# its own axes; anything without one -- the older .jld2 files, and the bare
+# (β_vals, x_vals) tuples compare_runs.jl builds -- falls back to the original
+# β/x behaviour. See axis_spec.
 #
 # Varies per figure: title, colorbar label, colour limits, marker size,
 # colormap. Anything else is forwarded straight to Plots via kwargs.
@@ -85,6 +85,39 @@ function load_results_rxi(fname)
                         yvals = ξ_vals,
                         xlab  = L"r = \kappa_1/\kappa_2",
                         ylab  = L"\xi = 4g_1g_2/(\kappa_1\kappa_2)",
+                        xsc   = :log10,
+                        ysc   = :identity))
+    end
+end
+
+# ------------------------------------------------------------------------
+# load_results_xxi: the same, for a run_x_xi.jl sweep -- the (x, ξ) plane at
+# fixed (β, r).
+#
+# A third loader for the same reason there is a second one: the .jld2 keys
+# genuinely differ, and reusing r_vals/ξ_vals to hold ξ/x would make a file's
+# field names stop describing its contents.
+#
+# ROW = ξ (horizontal, log10), COLUMN = x (vertical, linear) -- matching
+# run_x_xi.jl's grid layout, which in turn matches both other sweeps' "row
+# coordinate is the horizontal/log axis", so flatten_grid needs no change.
+# ------------------------------------------------------------------------
+function load_results_xxi(fname)
+    isfile(fname) || error("no such file: $fname (working directory is $(pwd()))")
+    return jldopen(fname, "r") do f
+        ξ_vals = f["ξ_vals"]
+        x_vals = f["x_vals"]
+        (outs        = f["outs"],
+         labels      = f["labels"],
+         ξ_vals      = ξ_vals,
+         x_vals      = x_vals,
+         params      = f["params"],
+         status_grid = f["status_grid"],
+         fname       = fname,
+         axes        = (xvals = ξ_vals,
+                        yvals = x_vals,
+                        xlab  = L"\xi = 4g_1g_2/(\kappa_1\kappa_2)",
+                        ylab  = L"x = 4\eta^2/(\kappa_1\kappa_2)",
                         xsc   = :log10,
                         ysc   = :identity))
     end
@@ -170,14 +203,24 @@ fmt_num(v::Real) = @sprintf("%g", v)
 #   (r, ξ) sweep   x, β, κ_geo are held fixed and ALL FOUR of κ_1, κ_2, g_1,
 #                  g_2 vary across the grid -- so printing them would be
 #                  actively wrong, not merely uninformative
+#   (x, ξ) sweep   β, r, κ_geo are held fixed; κ_1 and κ_2 are constant too
+#                  (r is), but η and g move, one per axis
 #
-# Detected on :κ_geo, which only the (r, ξ) params tuple has.
+# Detected on :κ_geo, which both dimensionless-coordinate sweeps have, then on
+# :x_fixed vs :r_fixed to tell those two apart. Testing :κ_geo alone was enough
+# while (r, ξ) was the only such sweep; it is not now, and getting it wrong
+# reaches for a field that does not exist rather than printing something merely
+# wrong -- keep the inner branch keyed on the coordinate that is FIXED.
 # ------------------------------------------------------------------------
 function param_string(p)
     parts = String[]
-    if hasproperty(p, :κ_geo)
+    if hasproperty(p, :κ_geo) && hasproperty(p, :x_fixed)
         push!(parts, "x = $(fmt_num(p.x_fixed))")
         push!(parts, "\\beta = $(fmt_num(p.β_fixed))")
+        push!(parts, "\\sqrt{\\kappa_1\\kappa_2} = $(fmt_num(p.κ_geo))")
+    elseif hasproperty(p, :κ_geo) && hasproperty(p, :r_fixed)
+        push!(parts, "\\beta = $(fmt_num(p.β_fixed))")
+        push!(parts, "r = $(fmt_num(p.r_fixed))")
         push!(parts, "\\sqrt{\\kappa_1\\kappa_2} = $(fmt_num(p.κ_geo))")
     else
         push!(parts, "\\kappa_1 = $(fmt_num(p.κ_1))")
