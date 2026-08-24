@@ -29,6 +29,12 @@ julia --project=. -t auto compare_param_sets.jl
 
 # where the adiabatic concurrence peaks -- adiabatic model only, seconds, no threads
 julia --project=. adia_concurrence_max.jl [x_lo x_hi β_lo β_hi len]
+
+# the entanglement boundary u_c(x), measured and drawn against the closed form
+julia --project=. adia_boundary.jl [x_lo x_hi N_x N_u]     # ~10 s, no threads
+
+# how C_adia varies INSIDE that region -- ∂C/∂u and ∂C/∂x, mapped
+julia --project=. adia_derivatives.jl [x_lo x_hi N_x N_u]  # ~40 s, no threads
 ```
 
 All three of `run_jc_pump_disp_asy.jl`, `run_r_xi.jl` and `run_x_xi.jl` have a top-level
@@ -64,12 +70,14 @@ run_jc_pump_disp_asy.jl     run_r_xi.jl             run_x_xi.jl
     ├─ run_plot.jl               └─ run_plot_r_xi.jl        └─ run_plot_x_xi.jl
     └─ compare_runs.jl  (two .jld2)
                  │
-        plotting_functions.jl   plot_map / save_fig / axis_spec,
-                                included by all four plot drivers
+        plotting_functions.jl   plot_map / save_fig / axis_spec / flatten_grid,
+                                included by all six plot drivers
 
     STANDALONE -- no sweep, no .jld2
         compare_param_sets.jl   pairwise D between named parameter sets
         adia_concurrence_max.jl   argmax of C_adia over (x, β), via run_adia
+        adia_boundary.jl        u_c(x) measured vs closed form; own figure
+        adia_derivatives.jl     ∂C/∂u and ∂C/∂x maps + the x_opt(u) ridge
 
     PROSE -- no code, own sections below
         files_online/           closed-form parallel project; INVERTS ξ
@@ -364,9 +372,11 @@ shape, so it is axis-agnostic and both sweeps share it unchanged.
 
 ## Plotting
 
-`run_plot.jl` is the single-run entry point (`compare_runs.jl` is the two-run one; both
-`include` `plotting_functions.jl`, and nothing else should). It runs at top level so `d`
-and `figs` stay live in the session:
+`run_plot.jl` is the single-run entry point and `compare_runs.jl` the two-run one. Five
+files now `include` `plotting_functions.jl` — those two, `run_plot_r_xi.jl`,
+`run_plot_x_xi.jl`, and `adia_boundary.jl`, which is not a sweep driver at all and uses
+only `apply_theme!`, `flatten_grid` and `save_fig`. Nothing else should.
+`run_plot.jl` runs at top level so `d` and `figs` stay live in the session:
 
 ```julia
 figs[:tracedist]
@@ -463,11 +473,86 @@ PSD, so Wootters' construction doesn't apply to it. The labels say what is actua
 computed; keep it that way.
 
 Figures go to `Full_vs_Adia/` (what `run_plot.jl` passes), `Full_vs_Full/`
-(`compare_runs.jl`), `Full_vs_Adia_rxi/` (`run_plot_r_xi.jl`) and `Full_vs_Adia_xxi/`
-(`run_plot_x_xi.jl`), PDF only. `save_fig`'s own default is `figures3/`, and `figures/`,
-`figures2/` also exist from earlier runs — seven destinations, none tracked by git.
+(`compare_runs.jl`), `Full_vs_Adia_rxi/` (`run_plot_r_xi.jl`), `Full_vs_Adia_xxi/`
+(`run_plot_x_xi.jl`) and `Adia_boundary/` (`adia_boundary.jl`), PDF only. `save_fig`'s own
+default is `figures3/`, and `figures/`, `figures2/` also exist from earlier runs — eight
+destinations, none tracked by git.
 Note the `_xxi` filename suffix carries only `β, r, κ_geo`, so two (x, ξ) runs differing
 in `len` or either range overwrite each other's PDFs (the `.jld2` names do not collide).
+
+### Figure audits — a figure is not verified because someone looked at it
+
+**This applies to every figure in this repo, not to any one script.** The numerics here are
+checked hard: every sweep and scan carries a battery of pass/fail lines, and those batteries
+have caught real errors, including one in `files_online`'s own tables. **None of that
+machinery was ever pointed at the figures**, whose entire QA was "eyeball it" — and a
+figure was consequently wrong for several sessions in a way that survived repeated looking.
+
+The failure was not the artifact. It was writing into this file that a colour scale
+"**hides nothing**". Looking at a panel can support "I did not notice anything"; it cannot
+support a claim about all 6163 of its cells. **Do not state a negative about a figure
+without a test that could fail.**
+
+Three audits, all cheap, all pure functions of data already computed:
+
+**1. Colour honesty.** For any colour-mapped panel, count the cells that *render as*
+background/midpoint but whose *value* is materially non-zero. **The two thresholds must be
+independent** — one perceptual (fraction of the colorbar), one physical (a value that
+matters in the units of the quantity). Measured on the `∂C/∂x` panel:
+
+| colour variable | cells reading as white | of those, MISLEADING | worst value painted white |
+|---|---|---|---|
+| `v` (linear) | 534 | **47** | 0.168 |
+| `sign(v)·sqrt(\|v\|)` | 30 | **0** | 0.000 |
+| `:split_log` | 0 — the band is empty as a *set* | **0** | 0.000 |
+| **`:sign_map`** (the shipped default) | **N/A — there is no colour scale** | — | — |
+
+**This audit runs inside `adia_derivatives.jl` on every invocation** and the `:linear` branch
+is kept precisely so it can be re-fired — it still reports 3 misleading cells on a coarse
+20×15 grid, worst value 0.138 painted as zero.
+
+**Read the last two rows carefully, they are different kinds of claim.** `:split_log` earns
+its zero structurally: no cell is *drawn* within `|z| < 1`, so "reads as white" is empty as a
+set rather than empty as a count. `:sign_map` does not have a colour scale at all, so the
+failure mode does not exist for it — the script prints that reason rather than a `0`, because
+printing `0 misleading cells` for a panel with no midpoint colour would be a category error
+dressed as a pass. **Neither row licenses the phrase "the figure hides nothing"**; they
+license exactly what they say.
+
+The linear panel appeared to have **two** zero contours where the data has one. **White in
+a diverging colormap means "small", and how small is set by an extreme value elsewhere in
+the panel** — here the `x → 0` divergence pushed `|clims|` to 2.80, so `−0.215` rendered
+identically to `0`. The fix for a divergent or long-tailed field is a *transform*, not a
+clip: a percentile clip trades the fake-zero artifact for a saturated band somewhere else.
+
+**2. Frame containment.** Report, per drawn curve, what fraction of it lies inside the axis
+limits. A curve leaving the frame must be *stated*, never left to be inferred from a line
+that runs off the side. On the `∂C/∂x` panel the ridge is inside for **101 of 180 rows** —
+it exits the left edge at `u = 52.6`, so the upper 44% of the plotted range shows none of
+it, which is invisible unless reported. Same check on the boundary figure puts `u*(x)`
+inside for only 6% of columns, which is correct and expected but worth knowing.
+
+**3. Label–encoding agreement.** If the colour variable is transformed, the colorbar
+**title** must name the transform. This is not stylistic: **GR does not reliably honour
+custom `colorbar_ticks`**, so relabelling the numbers back into original units is not
+available, and a bar titled `∂C/∂u` over `log10|∂C/∂u|` values is simply false. Shipped
+that way once. Related and equally load-bearing: **on a panel with an active `marker_z`
+colorbar, GR may not give the colour that was requested** — `:limegreen` and
+`RGB(0,0.7,0)` both rendered pale blue-grey, `:magenta` rendered dark red, a `:lime` marker
+rendered cyan, while `:yellow` markers and `lc = :black` survived. Plots reports the
+attribute as exactly what was asked for, so nothing errors and nothing warns. Pick overlay
+colours **by looking at the output**, and treat the keyword as a request.
+
+**The trap that makes all three feel done when they are not:** a check whose two thresholds
+are the same number **cannot fail**. The first version of audit 1 defined "reads as white"
+and "is not zero" off the same quantity, reported `0 misleading` for both the broken and
+the fixed panel, and looked like a clean pass. **Before trusting a new check, confirm it
+fires on the known-bad case.** Every audit above is stated with the number it produced on
+the version that was wrong, for exactly that reason.
+
+Corollary for this file: **"eyeball it" is not a verification step, it is the record that
+none was performed.** Where a figure property is genuinely only inspected, say so, rather
+than logging it among the checks.
 
 ## Comparing runs — `compare_runs.jl`
 
@@ -945,6 +1030,13 @@ Results there that bear directly on this repo:
 
 ## `file_concurrence/` — closed-form analysis of the adiabatic concurrence
 
+⚠ **This section describes rev. 4 and the file has moved on.** A session note dated later
+cites **rev. 5**, carrying a *universal* `∂C/∂u < 0` proof via `Q > 0 on ℝ × (0,1)` — which
+would supersede the rev. 4 story below of a degree-174 discriminant needed on the
+`x < x_dagger` sliver. Nothing here has been rewritten from that note alone: **read the .md
+before trusting the revision-specific claims in this section.** `adia_derivatives.jl`'s
+check (a2) adds a third, independent large-u route (`A₀, A₁ < 0`) that is revision-agnostic.
+
 One file, `concurrence_adia.md` (~1220 lines, 56 KB, rev. 4), a handoff document that
 solves the adiabatic model's concurrence in closed form. It is **not** part of
 `files_online/` and has no `claude.md` of its own — **this** file governs it. Tracked by
@@ -1072,6 +1164,496 @@ Explicit counterexample at x = 0.11: `N` is larger off-centre (0.412056 vs 0.411
 existence proof is safe precisely because existence only needs a sign. This repo computes
 concurrence as a ratio too, so the same trap is reachable here.
 
+## The entanglement boundary, measured — `adia_boundary.jl`
+
+The numerical check on everything above. It maps `C_adia` over the **(x, u) plane** with
+`run_adia` and puts the closed-form `u_c(x)` of §4.1 on top of it. Output is
+`Adia_boundary/adia_boundary.pdf` plus six checks on stdout. ~10 s, no threads, no `.jld2`
+read or written.
+
+```
+VERDICT: closed form and run_adia agree on the boundary to 1.2e-12 (worst, relative)
+```
+
+**The load-bearing check is (b), and it is a comparison of two things that share no code.**
+For each x column the script brackets the `C > 0 → C = 0` transition by *doubling* u and
+then bisects it, never consulting `uc_closed`. Over 181 live columns the bisected boundary
+matches §4.1 to **1.2e-12 worst, 2.2e-14 median**. `C_adia` vanishes *linearly* in
+`(u_c − u)` — `N = vg − √S` is linear near its root — and `calc_concurrence` clamps at
+exactly `0.0`, so the crossing is a clean step and bisection resolves it to nearly the last
+bit. That precision is the reason this is worth running rather than eyeballing.
+
+The other five:
+
+- **(a) §4.4's three stored values.** Two match to ~5e-6 relative. **The `x = 0.02` row of
+  §4.4 is a last-digit slip in the `.md`**: it prints `577.76`, both routes here give
+  `577.751476`, and §4.4's *own* second column (the older root-finding result) says
+  `~577.75`. Display value only, nothing depends on it — but do not "correct" this repo to
+  match it.
+- **(c) the curve meets `u = 2` exactly at `x_c`.** `u_c(x_c) = 2.000000000000`, and
+  root-finding `u_c(x) − 2` returns `x_c` to `4e-16` against the cubic. Two independent
+  routes to the threshold, and the visual centrepiece of the figure: the coloured wedge
+  pinches shut precisely on the `x_c` line.
+- **(d) the small-x asymptote** `u_c ≈ 1/(4x²) − 1/x + 4` (§4.5), ratio 0.9999 at x = 0.005
+  drifting to 0.989 at x = 0.05 — the expected `O(x)` error, and a straight line of slope
+  −2 at the left edge of the log-log figure.
+- **(e) no revival.** All 39 grid columns above `x_c` × 180 u-values each come out
+  **exactly `0.000e+00`**. This is the half of §3.5 that needed `x_v < x_c`, tested
+  directly rather than argued.
+- **(f) anchored outside itself.** `C_of(x*, β=1)` matches §10.7's `C(2,x*)` to `1.4e-16`,
+  and `C_of(0.12875, β=1)` reproduces run A's stored `0.2360436749507588` to `0.0e+00`.
+- **(g) the proof's own geometry**, added when the derivative maps were built. `u*(x)` from
+  §10.3 — where `G_u` changes sign, the region-2/region-3 divide, a *rational* function
+  with no square root — must cross `u = 2` exactly at `x_dagger` from §10.4. It does:
+  `u*(x_dagger) = 2.000000000000`, and root-finding `u*(x) − 2` returns `x_dagger` to
+  `3.9e-16`. **Nothing in the `.md` ties `V2`, `V3` and `V` together**, so this checks all
+  three transcriptions at once. The figure draws `u*(x)` and the `x_dagger` vertical, which
+  shows **region 3 to scale** — the sliver `x < 0.0518, u ∈ [2, u*(x))` that needed the
+  degree-174 discriminant is a visibly small corner of the domain, and everywhere else
+  `dC/du < 0` falls out of "negative minus non-negative".
+
+**Axes are forced, not chosen.** `u_c ~ 1/(4x²)` as `x → 0`, so `u_c` spans 2 → ~10⁴ and
+**the y axis must be log**; `x` cannot start at 0 (every denominator carries `8x²q1`), so
+`x_lo` defaults to 0.02 where `u_c = 577.75`. `x_hi` defaults to `x_c + 0.1` on purpose —
+the columns past the threshold are what check (e) tests.
+
+Two implementation notes worth keeping:
+
+- **`C_of` is duplicated from `adia_concurrence_max.jl`, not included.** That file has no
+  `main()` guard, so including it would run its whole scan — the same reason `observables.jl`
+  exists. If the two copies ever disagree, `adia_concurrence_max.jl` is the older and
+  better-checked one.
+- **This is the one figure whose log axis is vertical.** `plot_map` hardcodes the row
+  coordinate onto the *horizontal* log axis; here the log coordinate is `u` and belongs on
+  the vertical. So `flatten_grid` is reused for what it is good at — pairing cells with
+  coordinates and dropping non-finite ones — and its two outputs are handed to `scatter`
+  **swapped**. Dead cells are drawn in grey rather than dropped, deliberately: an absence
+  of markers would not distinguish "measured, came out zero" from "never sampled", and the
+  measured dead zone is the whole point.
+
+## Inside the region — `adia_derivatives.jl`
+
+Where `adia_boundary.jl` settles the region's *edge*, this maps its *interior*: `∂C/∂u` and
+`∂C/∂x` over the same (x, u) plane, from **central finite differences of `run_adia`**,
+checked against §10.1. Two figures into `Adia_boundary/`: **`dC_du.pdf`, now a single map
+panel** (its band panel was removed — see the panel history below), and **`dC_dx.pdf`, two
+panels** — a map, and under it a panel carrying the same claim without colour. ~40 s, no
+threads.
+
+```
+VERDICT: 0 of 6163 sampled ∂C/∂u are >= 0 (theorem holds numerically);  ridge at u=2 hits x* to 3.6e-11
+```
+
+**The two fields are not equally interesting, and the figures differ because of it.**
+
+**`∂C/∂u` is single-signed** — that *is* §10's theorem — so check (a) tests it at every one
+of 6163 live points and finds a maximum of `−9.91e-06`. As a picture that is one boolean:
+on a diverging colormap half the range goes unused, and on a linear one the panel is a
+single flat colour (median `−0.149` against a max of `−9.7e-06`, **5 decades**).
+
+**Two earlier encodings both failed the same way, and the reason is worth keeping.**
+`log10|∂C/∂u|` on `:magma` recovered the structure but *deleted the sign* — the panel would
+have looked identical had a stray positive value existed, so "it is negative" was true only
+because the title said so. `sign(v)·log10(1+|v|/1e-6)` on `:balance` then put every cell on
+one half of a symmetric bar, which is better but still asks the reader to notice that the
+other half is empty **and** still prints a `|·|` on the colorbar. Neither shows the sign of
+a cell; both report a magnitude and assert a sign beside it.
+
+The current default is **`DU_SCALE = :neg_log`: colour = `log10(−∂C/∂u)`, no absolute value
+anywhere.** The point is not the label — it is that the transform **does not exist** off the
+theorem. A cell with `∂C/∂u ≥ 0` has no `log10(−v)`, so it is split out before the colour
+map (`pos`/`neg`), counted on stdout, and over-plotted as red markers whose legend entry is
+drawn *only if the set is non-empty* — an always-present "0 cells" entry would be an
+assertion, a series that appears from nowhere is evidence. `:signed_log`, `:log` and
+`:linear` are kept as comparison branches.
+
+**The colormap is `cgrad(:magma, rev = true)`, and the reversal is not cosmetic.** Plain
+`:magma` puts bright at high `log10(−∂C/∂u)` — i.e. **bright = most negative**, which inverts
+the ordering of the underlying quantity and makes the panel's most conspicuous feature its
+*least* marginal region. A reader scanning for "is this negative?" was pulled to the `u = 2`,
+`x → x_c` corner where `∂C/∂u = −0.94` and the answer is least in doubt, while the cells that
+actually come closest to zero (`−9.9e-06`, at `u ≈ 565`) sat in near-black obscurity. This
+was misread in exactly that way once, as "the maximum of the whole plot is at `u ≈ 2`" — it
+is the *minimum*. Reversed, bright = closest to zero, so the eye goes where the claim is
+tightest. **The direction is stated on the figure, in the title's second line** —
+`bright = closest to zero (weakest) · dark = most negative`. It has moved twice and the
+history is the warning: it started in the title, was lost when the title was cut to the
+single line `"∂C/∂u < 0 EVERYWHERE"`, survived only in panel 2's legend string "the dark
+band of the map", and came back to the title when panel 2 was deleted. **A reversed colormap
+whose direction is stated nowhere is worse than an unreversed one**, so if that title line is
+ever trimmed, the direction has to land somewhere else in the same edit.
+
+**Figure 1 is ONE PANEL — the map. The `−∂C/∂u` band panel was removed on request.**
+What it drew and where that content went:
+
+- its **lower** edge (`min_x`, at `x → x_max(u)`, the death boundary) was the one intrinsic
+  curve on it, and is now unillustrated. If any of it is ever wanted back, that is the part
+  worth redrawing — **not** the band
+- its **upper** edge was `DU[:, 1]`, a slice along `X_LO`, i.e. the window artifact below.
+  Deleting it deletes a curve that was being read as a margin
+- it never carried the sign claim and **could not**: on a log axis a value with `∂C/∂u ≥ 0`
+  is *unplottable* — dropped, not drawn on the wrong side — so the panel could not falsify
+  its own headline. Check (a)'s violation **count** carries the sign, and it can fail
+
+**The row reductions are kept even though nothing draws them.** They cross-check check (a)'s
+extrema by a different reduction of the same grid (`Δ = 0.0e+00`), and the 175-of-175
+assertion is what licenses check (a)'s "the weakest sits at column 1" and all of (a2)'s
+framing. They were checks that happened to have a picture, not a picture that printed
+numbers — which is why deleting the picture cost nothing. Their stdout labels no longer name
+a panel.
+
+### ⚠ `max ∂C/∂u` is a window corner, not a margin — the mistake this section is about
+
+This is the most important thing in this section, and it was wrong here for a long time
+while looking like a result.
+
+**`∂C/∂u` is strictly monotone decreasing in x at fixed u.** Asserted on every run now: the
+weakest value in a row sits at the row's first live column in **175 of 175 live rows**. So
+`max_x ∂C/∂u` is *always* attained at the smallest live x, which is `X_LO` — the edge of the
+window. The panel's upper edge is literally `DU[:, 1]`.
+
+**The supremum over the physical region is 0.** `A₀ ~ −√x` (below), so `∂C/∂u → 0` as
+`x → 0`, and `x → 0` is *inside* the region at every u. It also → 0 as `u → ∞` via `u^{−3/2}`.
+**No grid can ever exhibit a strictly negative bound**, so any number quoted as one is a
+coordinate of the window. `X_LO` is a **CLI argument**, and the "max" tracks it:
+
+| `X_LO` | reported value | vs FD floor `1.1e-9` |
+|---|---|---|
+| 0.02 | −9.58e-06 | 8713× |
+| 0.005 | −7.18e-08 | 65× |
+| 0.002 | −2.88e-09 | 2.6× |
+| 0.001 | −2.54e-10 | **0.2× — below the floor** |
+
+`adia_derivatives.jl 0.001 …` used to print `max ∂C/∂u = −2.54e-10 → uniformly negative`: a
+pass declared on a number whose sign the file's own finite differences cannot resolve.
+**There is now a guard that fires on exactly that invocation** (`WINDOW TOO NARROW`), and it
+has been verified to fire — a guard never shown to fail is not a guard.
+
+**The word "maximum" was itself the bug.** `−9.91e-06` is the *least negative* value, while
+the largest magnitude in the same grid is `0.937`, five decades away. Calling the small one
+"the max" is the exact wording that got the figure read backwards, twice in one session.
+**Check (a) is now a boolean and a count** — `points with ∂C/∂u >= 0: 0` — which is what a
+sign claim actually is and which can fail; the extremal values are reported after it, named
+"strongest sampled" and "weakest sampled", never "max".
+
+Corollary, and the reason the band panel was ultimately deletable: **its two edges were not
+the same kind of object.** The lower one (`min_x`) sits at `x → x_max(u)`, the death
+boundary, inside the window since `X_HI > x_c` — **intrinsic**. The upper one (`max_x`) was
+the window edge — **an artifact**. A "range" between a real curve and an arbitrary one is
+not a range of anything.
+
+### Figure 1's panel history — three panels, then two, then one
+
+Worth keeping in full, because every step was driven by a real defect and two of the fixes
+were wrong:
+
+1. **Three panels.** Map, plus a linear untransformed `max_x ∂C/∂u` against a bold zero
+   line, plus the full-range band. The linear panel existed so the sign claim had somewhere
+   an actual zero could be drawn — a log axis never can.
+2. **The middle panel went, on request.** Note what left with it: **there is no panel with a
+   zero line drawn on it anywhere in this file.** Before that, an even earlier version had
+   plotted only each row's *maximum*, which silently dropped the map's most conspicuous
+   feature (the strong band along `u = 2`, `∂C/∂u → −0.94`) and read as the two panels
+   disagreeing about the data. **A summary panel that drops the extremum reads as missing
+   data** — that is the transferable lesson, and it is why the range panel replaced it.
+3. **The y-axis flip: tried, shipped, reverted, all in one session.** The complaint was
+   real — at `u ≈ 565` the band pinches to `9.91e-06` at the bottom of the frame, which
+   reads as the most extreme place on the plot while being the value closest to zero. But
+   `yflip` fixes the *position* reading by breaking the *slope* reading: both edges fall
+   3–5 decades in u and are then drawn **rising**, so anyone not registering the flip reads
+   growth where there is decay. It was also answering the wrong question, since the quantity
+   being repositioned was half artifact. **Content before encoding.**
+4. **The band panel went too, on request. Figure 1 is now the map alone.** This is the
+   cheapest resolution of everything above: the artifact edge is gone, the un-falsifiable
+   sign display is gone, and nothing was lost that the checks did not already carry.
+
+The through-line: **a log axis cannot demonstrate a sign at all.** A value with
+`∂C/∂u ≥ 0` is *unplottable* — dropped, not drawn on the wrong side. Every version of this
+panel from step 2 onward was displaying a claim it structurally could not contradict. Check
+(a)'s violation count is what carries the sign, and unlike any of the panels, it can fail.
+
+**Do not re-add a panel here without saying which of these four it is.**
+
+**Sizing.** Figure 1 is now a single panel at `size = (900, 640)`. **Figure 2 is still two**,
+at `size = (900, 980)` with `heights = [0.62, 0.38]`, and it needs the explicit
+`left_margin` — the default clips the lower panel's rotated `ylabel` silently, with no
+warning and no error. Both keep `left_margin = 7Plots.mm`; on figure 1 it is now
+belt-and-braces rather than load-bearing.
+
+**`∂C/∂x` changes sign** (§10.7), range `[−1.46, +2.80]`, and after four attempts at encoding
+it the panel now has **no colour scale at all**. `DX_SCALE = :sign_map` is the default:
+
+- **Colour carries the sign, and only the sign** — two flat pale colours, warm for
+  `∂C/∂x > 0`, cool for `∂C/∂x < 0`. That is the one thing a colour can say without a
+  transform, so it is the only thing this one says.
+- **Magnitude comes back as labelled contours**, at `c ∈ {±2, ±1, ±0.5, ±0.1}` (those that
+  exist), each drawn in its own colour and annotated **with its own value**. Nothing on the
+  figure is a transformed number any more: every number printed on it is a value of `∂C/∂x`.
+- **`c = 0` is the ridge**, drawn black as the heaviest member of the same family — so the
+  contour set and the payload are one object rather than a curve laid over an unrelated map.
+
+The three colour-mapped scales are kept as branches (`:split_log`, `:signed_sqrt`,
+`:linear`), and the sequence is worth knowing because each fixed the previous one's defect
+and introduced its own:
+
+| branch | fixed | broke |
+|---|---|---|
+| `:linear` | — | painted a nonzero strip the colour of zero → a **fake second zero contour** |
+| `:signed_sqrt` | the fake contour | did it with an `abs()`: the sign became a factor on a magnitude, so the panel would render identically if a sign were wrong |
+| `:split_log` | the `abs()`; `|z| < 1` empty by construction, so nothing *can* render as zero | a colorbar reading `±[1 + log₁₀(±∂C/∂x / 10⁻⁵)]` — three ideas on one axis |
+| **`:sign_map`** | the decoding, by having no scale to decode | magnitude is now sampled at 7 levels rather than continuous |
+
+**`:linear` is retained on purpose**: it is the known-bad case the colour-honesty audit must
+fire on, and it does — see the audit numbers below. **Do not delete it to tidy the file.**
+
+Two things that survive the removal of the colour scale, because neither is a plotting
+parameter:
+
+- **`DX_FLOOR = 1e-5` is measured, not chosen.** Check (b) now records its worst *absolute*
+  FD discrepancy (`8.5e-08` for `∂C/∂x` on the default grid); `1e-5` sits `118×` above it,
+  and the run says so and complains if the margin drops below 10×. A cell below it has a
+  **sign the numerics do not resolve**, so it is drawn grey rather than as either sign — 1 of
+  6163 on the default grid, legend entry only if non-empty. It no longer appears anywhere on
+  the figure, which was the complaint that ended `:split_log`.
+- **The contours cost nothing.** They are interpolated from `DX`, the grid check (b) has
+  already scored against §10.1 — not re-scanned. A per-row `dC_dx_fd` scan would be more
+  accurate and cost ~17 s (180 rows × 400 points × 2 `run_adia` calls), roughly doubling the
+  script; the `c = 0` cross-check below measures what the interpolation costs instead, and it
+  is `4.1e-05` worst against a grid spacing of `2.6e-03`.
+
+**Its zero-locus is the payload**: the ridge `x_opt(u)`, the best pump at each arm
+asymmetry, bisected per u row. Two things make it evidence rather than decoration:
+
+- **Its bottom endpoint is known in advance.** §10.7 proves `∂C/∂x|_{u=2}` changes sign
+  exactly at `x*`, and the ridge lands there to **3.6e-11** — not a fit.
+- **It reproduces three stored numbers and extends them to a curve.** `files_online/06` §6
+  gives `x_opt` at three asymmetries only; the ridge passes through all of them:
+
+  | β | 1 | 2 | 10 |
+  |---|---|---|---|
+  | ridge here | 0.148550 | 0.106837 | 0.042379 |
+  | stored | 0.1486 | 0.107 | 0.042 |
+
+**How far it extends — check (h), and the figure hides the answer.** The ridge has a
+**genuine lower terminus at `(x*, u = 2)`** — a real endpoint, because `u = β + 1/β ≥ 2` is
+a hard domain boundary (β = 1), not because the curve stops. It has **no upper terminus**:
+it runs to `u → ∞` with `x_opt → 0`, staying strictly inside the entangled region the whole
+way. The asymptotics are exact and clean:
+
+```
+x_opt · √u  → 1/6        x_max · √u  → 1/2        x_opt / x_max  → 1/3
+   (0.16666646 at u = 1e12)   (0.49999950)            (0.33333326)
+```
+
+So `x_opt → 1/(6√u)` while the death boundary goes as `1/(2√u)`: **at extreme arm
+asymmetry the optimal pump sits at exactly one third of the way to the boundary.**
+
+**In the figure the ridge exits the LEFT edge, not the top** — it crosses `x = x_lo = 0.02`
+at `u = 52.6` (β = 52.6), well below the frame top of `u = 664`, so the upper ~44% of the
+plotted u range shows no ridge at all. That is framing, not absence. Lowering `x_lo` shows
+more of it, at the cost of a much taller u axis (`u_c ~ 1/(4x²)`).
+
+**Figure 2 carries a second panel too, and it needs no colorbar to be believed**: `∂C/∂x`
+against `x`, **untransformed, linear, in its own units**, for `u ∈ {2, 2.5, 4, 10.1}`, each
+curve crossing a drawn zero line exactly once. That is check (g) as a picture rather than as
+a count, and it is the half of the figure that survives any doubt about what a colour means.
+It shares the map's `xlims`, so a vertical dropped from a ridge marker above lands on the
+crossing below. `u = 2.5` and `10.1` are β = 2 and β = 10 exactly — check (e)'s stored-`x_opt`
+rows — and every crossing is printed against `ridge_x(u)`:
+
+```
+u = 2    (β = 1)    crossing 0.148550   ridge_x 0.148550   Δ = 2.8e-07
+u = 2.5  (β = 2)    crossing 0.106839   ridge_x 0.106837   Δ = 2.2e-06
+u = 4              crossing 0.071443   ridge_x 0.071439   Δ = 3.4e-06
+u = 10.1 (β = 10)   crossing 0.042383   ridge_x 0.042379   Δ = 3.5e-06
+```
+
+Δ is the linear-interpolation error on a 400-point x line, not a disagreement. All four
+curves terminate by leaving the entangled region rather than at the frame edge, which the
+run states per curve — frame containment, audit 2. **The contour levels are drawn into this
+panel as dotted horizontal lines in the same colours**, which is what ties the two panels
+together: a level is a curve upstairs and a line downstairs carrying the same number, so
+either can be read against the other and neither is a colour scale.
+
+**Three checks specific to the contours**, all printed, all able to fail:
+
+- **Extraction.** The `c = 0` contour, pulled from the grid by the *same* interpolation every
+  drawn level goes through, against `ridge_x`'s independent 120-step bisection: worst
+  `4.1e-05`, median `1.3e-05`, over 101 rows, against a grid spacing of `2.6e-03`. This is
+  the one level whose answer is known to `3.6e-11`, so it validates the extraction — and on a
+  square grid nothing else would catch a transposed row index.
+- **Crossings per row.** A level crossed twice in one row would be joined into a curve that
+  does not exist, so the count is printed and every contour is drawn as **markers, not a
+  joined line**. Check (g) only settles the `c = 0` level; monotonicity of `∂C/∂x` in x at
+  the other levels is *not* established, so it is measured rather than assumed. Currently 0
+  multi-crossing rows at every level.
+- **Frame containment.** Six of the seven levels **exit the left edge** — they run to
+  `x → 0` where `∂C/∂x → ±∞` — and only `c = −1.0` ends inside the frame. That is stated per
+  level on stdout rather than left to be inferred from curves that stop.
+
+### Check (a2) — the large-u law, and the trap in importing it
+
+`∂C/∂u = A₀(x) u^{−3/2} + A₁(x) u^{−2} + O(u^{−5/2})`, with `A₀ = −√x(1−x)³/p₁` and
+`A₁ = −2x^{3/2}(1−x)³V₂ / ((1+x)√q₁ p₁²)`, `V₂ = x⁷−7x⁶+19x⁵−21x⁴+7x³+23x²+5x+5`. Source is
+a session note comparing `∂C/∂u` at `u = 2` and `u = 500`.
+
+Two things it buys. **`V₂` is §10.3's polynomial, already Sturm-proven positive on (0,1)**,
+and `p₁, q₁ > 0` there, so `A₀ < 0` and `A₁ < 0` — **an independent, cheap proof of
+`∂C/∂u < 0` at large u**, by a different route from §10 (it says nothing near `u = 2`, which
+is what (c) and §10.5 cover). And it **predicts the window corner**: the weakest sampled
+value comes out of `A₀(X_LO)·u_c(X_LO)^{−3/2}` with no grid at all — `−9.8733e-06` against a
+measured `−9.9117e-06`, **0.39%** — which is what demotes that number from a result to a
+coordinate. Verified at a second, unrelated corner too (`X_LO = 0.001`, `u = 122638`: 0.90%).
+
+**⚠ The law is about the UNCLAMPED bracket `C̃`, not about `C`.** The physical concurrence is
+`C = 2·max{0, ·}`, so `∂C/∂u ≡ 0` beyond the death boundary `x_d(u)`, while `C̃`'s derivative
+there is analytic continuation — a number, but not a slope of anything. `x_d(500) = 0.02144`,
+so the note's own `x = 0.05, 0.1486, 0.4838` rows are **all outside**, and its §1 exists to
+separate the two objects. **Those three x values were lifted straight into this check on the
+first attempt**, into a script whose grid is the clamped field — the one confusion the note
+leads with. Every x is now asserted `x < x_d(u)`. (`x_max_of_u(500)` reproduces the note's
+60-digit `x_d` to `1.9e-14`, a free cross-check.)
+
+**⚠ The `u^{−1/2}` correction is not observable inside the region.** A *fixed* x leaves the
+region as u grows (`x_d ~ 1/(2√u)`), so the scan must hold `σ = x√u` fixed instead — a
+constant fraction of the way to the boundary (`σ → 1/2` is the boundary, `σ = 1/6` the
+ridge). But then `x ~ σ/√u`, so `A₁/A₀ ~ 10x ~ 10σ/√u` and the `A₁` term is `O(u^{−1})` —
+the **same order as the term after it**. Measured at `σ = 0.35`, both 1-term and 2-term
+residual ratios converge to 4 over `u × 4`, and the 2-term is no better than the 1-term at
+physical x. So the note's clean `u^{−1/2}` scaling is a fixed-x statement, and fixed x at
+large u is outside the region — which is why its demonstration used those three x values.
+A first attempt at a fixed `x = 0.005` gave a 1-term ratio of **10.86**: there the `A₁` term
+(`2.24e-3`) and the next order (`2.0e-3`) are the same size at `u = 500`, so the residual was
+a cancellation between comparable terms and its ratio meant nothing.
+
+Other checks: **(b)** FD-vs-§10.1 worst `1.2e-06` / median `7.3e-09` for `∂C/∂u`,
+`2.9e-06` / `8.3e-10` for `∂C/∂x` — two routes, no shared code; **(c)** §10.5's closed form
+for the `u = 2` row to `~1e-10`; **(f)** `∂C/∂x · sqrt(x(u+2)) → 1` as `x → 0`, the
+divergence that forbids a global sign; **(g)** `∂C/∂x` has **exactly one sign change per u
+row** — 1 in all 180 — so `C_adia` is unimodal in x at fixed u and the bisected ridge is
+the *whole* zero-locus, not one root of several.
+
+**Physical reading of figure 1**, worth having in words: `∂C/∂u|_{u=2}` runs monotonically
+**−0.017 at x = 0.02 to −0.94 at x_c**. Since `C''(β=1) = 2·∂C/∂u|_{u=2}`, **the β = 1 peak
+sharpens as the entanglement dies** — the state is most fragile to arm asymmetry exactly
+where it is weakest.
+
+### The `∂C/∂x` panel used to show a zero contour that does not exist
+
+Worth recording in full, because the figure was wrong in a way that survived being looked
+at, and because it is issue 2's family rather than a one-off.
+
+On a **linear** symmetric scale the panel appears to have **two** zero contours: the ridge,
+and a second edge running right along the `u = 2` axis. There is only one. `∂C/∂x` has
+exactly one sign change per u row — check (g), 180 of 180.
+
+The cause is that **white in a diverging colormap means "small", not "zero" — and how small
+is set by an extreme value somewhere else in the panel entirely.** `∂C/∂x → +∞` as `x → 0`
+(§10.7), so `|clims|` came out 2.80 from that corner, and along the bottom edge:
+
+| x | 0.1486 | 0.160 | 0.180 | 0.200 | 0.250 |
+|---|---|---|---|---|---|
+| `∂C/∂x` | **0.0000** | −0.0837 | −0.2152 | −0.3310 | −0.5675 |
+| % of range | 0.0% | 3.0% | 7.7% | 11.8% | 20.3% |
+
+Only the first is a zero; the next two render the same white as it, and the strip's far
+edge reads as a contour. **`sign(v)·sqrt(|v|)` fixed it at the source** — compressing the
+divergent tail and expanding the near-zero range moves `x = 0.18` from 7.7% to 28% of the
+bar, and the white collapses onto the actual zero. A 99th-percentile clip was tried first
+and reverted: it helps the bulk but saturates a wide band along the death boundary into
+flat dark blue, trading one artifact for another.
+
+**That fix was right about the failure and wrong about the method, and it has been replaced
+twice since.** `sign(v)·sqrt(|v|)` cures the fake contour by picking an exponent that happens
+to work — nothing forces `1/2`, and the `|v|` in it is exactly what figure 1 refuses to
+write, so the panel would have rendered identically had a sign been wrong. `:split_log` fixed
+that structurally (empty neutral band) but at the cost of a colorbar nobody can read.
+`:sign_map`, the shipped default, ends the sequence by **removing the colour scale**: sign in
+the colour, magnitude on labelled contours in real units.
+
+The audit numbers, all still re-producible by one edit to `DX_SCALE`:
+
+| `DX_SCALE` | misleading cells | worst value painted as zero |
+|---|---|---|
+| `:linear` | **fires** (3 of 61 even on a coarse 20×15 grid) | 0.138 |
+| `:signed_sqrt` | 0 | 0.000 |
+| `:split_log` | 0, and `|z| < 1` provably empty | 0.000 |
+| `:sign_map` | N/A — no colour scale to mislead | — |
+
+The thresholds are independent as the convention demands — perceptual is "within the central
+5% of the drawn `clims`", physical is "`|∂C/∂x|` above 1% of the panel maximum", the latter
+read off the untransformed data the colour map never touches. **The `:linear` branch is kept
+in the file for this reason**: a check never shown to fail on a known-bad panel is not a
+check, and this one is re-runnable by one edit.
+
+**The general lesson, which outlived three of the four encodings:** a colour scale can report
+a magnitude or it can report a sign, and making one axis do both costs either an `abs()` or a
+label nobody reads. Where the sign is the payload — as it is here, since the zero-locus *is*
+`x_opt(u)` — giving the colour to the sign and the magnitude to labelled contours is cheaper
+than any transform, and leaves no number on the figure that has to be decoded.
+
+An earlier draft of this section claimed the full linear range "costs some mid-tone
+contrast and hides nothing". **That was wrong** — it hid a nonzero region by painting it
+the colour of zero, which is precisely the failure issue 2 describes for
+`concurrence_diff`. The general rule: on a diverging map whose data has a divergence or a
+long tail, a linear scale will manufacture a fake zero set, and the fix is a transform, not
+a clip.
+
+### Two traps, both of which return plausible wrong numbers rather than errors
+
+- **`calc_concurrence` clamps at exactly `0.0`.** A centred difference straddling `u_c`
+  differentiates *the clamp*, not the model, and yields a slope that looks fine. Guard: a
+  point is evaluated only when the centre **and both legs** are strictly inside the region;
+  otherwise `NaN`, which `flatten_grid` drops. Only 6163 of 39600 grid points survive — the
+  rest are the dead zone, consistent with the boundary figure's 84%.
+  **`u = 2` is a hard edge** (no real β below it), so that row gets a second-order *forward*
+  difference instead. It must not be dropped: it is the row §10.5 is about.
+- **On a panel with an active `marker_z` colorbar, GR does not give you the colour you ask
+  for.** Measured on `dC_dx.pdf`, all through the same PDF pipeline: `lc = :limegreen` and
+  `lc = RGB(0,0.7,0)` both rendered **pale blue-grey**; `lc = :magenta` rendered **dark
+  red**; a `:lime` marker rendered **cyan**. `:yellow` markers and `lc = :black` survived.
+  The first four are all colours present in that panel's own `:balance` colormap, which is
+  suggestive, but **the rule is not established** — the surviving yellow argues against any
+  simple "everything is quantized" story. What is established: the same keywords render
+  correctly on a panel *without* `marker_z`, and Plots reports the attribute as exactly
+  what was requested (`linecolor=RGBA(0,0.7,0,1)`), so **nothing errors and nothing warns**.
+  Practical rule: on a `marker_z` panel, pick overlay colours **by looking at the output**.
+  This is the colour version of the standing advice to eyeball GR rather than assume.
+
+  **`:sign_map` retired this trap on `dC_dx.pdf` by removing `marker_z` from that panel**,
+  which also means **the overlay colours there are no longer the ones that were approved.**
+  They were chosen by eye *against the mangling* — `:lime` was picked because it rendered
+  cyan — so a keyword that now renders truthfully renders *differently*. The ridge was moved
+  to `:black` accordingly, and the contour colours are explicit `RGB` triples, but none of it
+  has been checked against the output. The trap still stands for `dC_du.pdf` and for the
+  three colour-mapped `DX_SCALE` branches, all of which still carry a `marker_z` colorbar.
+
+### `run_adia` has a domain limit, and it is not where you would guess
+
+Mapped by check (h). `steadystate.eigenvector` throws *"Eigenvalue with smallest absolute
+value is not zero"* when **large β is combined with large x** — the deep dead zone, far
+from any entangled state:
+
+| u ≈ β \ x | 1e-6 | 1e-4 | 1e-2 | 0.1 | 0.3 | ridge sits at |
+|---|---|---|---|---|---|---|
+| 1e6 | ok | ok | ok | ok | ok | 1.7e-04 |
+| 1e8 | ok | ok | **FAIL** | **FAIL** | **FAIL** | 1.7e-05 |
+| 1e10 | ok | **FAIL** | **FAIL** | **FAIL** | **FAIL** | 1.7e-06 |
+
+**The ridge is never in the failing region** — `x_opt ~ 1/(6√u)` tracks the survivable band
+at every u tested, which is why check (h)'s asymptotics could have used `run_adia` and use
+the closed form only because it is exact and free out there. It fails *loudly*, which is
+the good kind; the same cannot be said of `bisect`, which returns a plausible number when
+handed a bracket with no sign change. That combination cost a debugging cycle: `x_max_of_u`
+had its left bracket at `1e-6`, too high to bracket `x_max ~ 1/(2√u)` past `u ~ 1e12`, so it
+silently returned `X_C` — six orders too large — and drove the ridge search into `x ≈ 0.48
+at β = 1e8`, killing the script. **The bug was the bracket, not the solver.** `x_max_of_u`
+now checks for the sign change explicitly and returns `NaN` rather than guessing.
+
+`C_of` is a third copy, after `adia_concurrence_max.jl` and `adia_boundary.jl`, for the
+same no-`main()`-guard reason. `sym_clims` is inlined rather than lifted — see issue 2,
+which this makes the fourth site for.
+
 ## Conventions worth not breaking
 
 - **Grids are `[row, column]` with the row being the horizontal/log axis** — `[N_β, N_x]`
@@ -1084,6 +1666,14 @@ concurrence as a ratio too, so the same trap is reachable here.
 - **NaN means "no data"**, everywhere. `nanmat()` prefills the state grids; observable
   grids prefill with `NaN`. A failed point becomes a gap in the heatmap instead of
   killing the run. Don't replace with zeros.
+- **A figure gets audited like a number.** Colour honesty, frame containment,
+  label–encoding agreement — the three checks under "Figure audits" in Plotting, each with
+  the value it returned on a version that was actually wrong. Two rules carry the weight:
+  **never state a negative about a figure** ("hides nothing", "shows all the structure")
+  without a test that could fail, and **confirm a new check fires on the known-bad case
+  before trusting it** — a check whose thresholds are not independent passes everything.
+  This convention exists because a panel here showed a zero contour that does not exist,
+  through several sessions of being looked at.
 - **`res.params` is the truth for plot axes**, not `config.jl` — the config may have been
   edited after the run that produced a given `.jld2`.
 - **The report block in `run_sweep` is wrapped in `try/catch` on purpose.** It sits before
@@ -1107,8 +1697,8 @@ concurrence as a ratio too, so the same trap is reachable here.
   here and prints the *negation* pattern; that is a match report, not an ignore verdict,
   and it reads exactly like a failure.) Everything tracked is the top-level `.jl`,
   `CLAUDE.md`, `Project.toml`, `.gitignore` and `file_concurrence/concurrence_adia.md` —
-  20 files (`git ls-files | wc -l` is the answer, not this sentence; it has drifted
-  before).
+  20 files, 22 once `adia_boundary.jl` and `adia_derivatives.jl` are added
+  (`git ls-files | wc -l` is the answer, not this sentence; it has drifted before).
 - **`origin` is `https://github.com/Yash-27/JC_TMS_ADIA.git`** — this working directory
   *is* that repo, so there is nothing to clone into a subfolder. GitHub's tree is
   `.gitignore`, `CLAUDE.md`, `Project.toml`, the top-level `.jl`, and
@@ -1238,8 +1828,27 @@ viridis on a signed quantity. There is no per-key colormap table to mirror `CLIM
 adding one is the clean fix.
 
 `compare_runs.jl` already does it the right way for its own signed panels (`sym_clims` +
-`cmap = :balance`, both verified to render correctly through GR). That's the pattern to
-lift into `plotting_functions.jl` when this gets fixed properly.
+`cmap = :balance`). That's the pattern to lift into `plotting_functions.jl` when this gets
+fixed properly.
+
+**That pattern is right about the colormap and UNAUDITED about the scale.** An earlier
+version of this paragraph said the two were "verified to render correctly through GR",
+which was an eyeball recorded as a verification — the thing "Figure audits" now forbids.
+What is actually known: `sym_clims` puts the neutral midpoint on zero, which is the part
+that matters for reading a sign, and that much is structural. What is **not** known is
+whether those panels have the fake-zero-contour problem, because `sym_clims` on a *linear*
+scale is exactly the configuration that produced one on `∂C/∂x` — a long tail anywhere in
+the grid inflates the near-white band until materially nonzero cells are painted as zero.
+`ΔC_full` reaches ~0.06 against `D` grids of ~0.16, so a tail is plausible and unmeasured.
+**Run audit 1 from "Figure audits" on the five `compare_runs.jl` panels before quoting them
+in anything.** No claim either way until then.
+
+**There are now four sites wanting `sym_clims`** — `compare_runs.jl` (which defines it),
+`run_plot_r_xi.jl` and `run_plot_x_xi.jl` (via their duplicated `overrides`), and
+`adia_derivatives.jl`, which inlines the three lines for its `∂C/∂x` panel. Each new signed
+panel raises the cost of not lifting it. The reason it keeps not happening is the same one
+in issue 8: it is a refactor of files that currently work, and the repo's practice is to
+duplicate rather than risk them.
 
 Until then, override at the call site:
 
